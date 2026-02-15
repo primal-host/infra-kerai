@@ -1,0 +1,43 @@
+[package]
+name = "kerai"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[[bin]]
+name = "pgrx_embed_kerai"
+path = "./src/bin/pgrx_embed.rs"
+
+[features]
+default = ["pg17"]
+pg17 = ["pgrx/pg17", "pgrx-tests/pg17"]
+pg_test = []
+
+[dependencies]
+pgrx = "=0.17.0"
+ed25519-dalek = { version = "2.2", features = ["pkcs8", "pem", "rand_core"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+syn = { version = "2", features = ["full", "extra-traits", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
+quote = "1"
+toml = "0.8"
+walkdir = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+pgrx-tests = "=0.17.0"
+
+[profile.dev]
+panic = "unwind"
+
+[profile.release]
+panic = "unwind"
+opt-level = 3
+lto = "fat"
+codegen-units = 1

@@ -3,3 +3,10 @@ session.*.log
 
 # Claude project config
 .claude/
+
+# Rust/pgrx build artifacts
+/target
+/tgt
+*.so
+*.dylib
+*.dll
