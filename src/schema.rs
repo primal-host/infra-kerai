@@ -1,9 +1,11 @@
 use pgrx::prelude::*;
 
-// Schema bootstrap — runs first, creates the kerai schema and enables ltree
+// Schema bootstrap — marker for dependency ordering.
+// The kerai schema is created automatically by PostgreSQL
+// because of `schema = kerai` in kerai.control.
 extension_sql!(
     r#"
-CREATE SCHEMA IF NOT EXISTS kerai;
+-- schema kerai is auto-created by PostgreSQL via .control file
 "#,
     name = "schema_bootstrap"
 );

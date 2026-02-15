@@ -1,7 +1,7 @@
 use pgrx::prelude::*;
 
 /// Returns the token balance for the self instance's wallet
-#[pg_extern(schema = "kerai")]
+#[pg_extern]
 fn wallet_balance() -> i64 {
     let balance = Spi::get_one::<i64>(
         "SELECT COALESCE(

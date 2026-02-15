@@ -2,5 +2,7 @@ comment = 'Kerai: AST-based version control with CRDT sync and knowledge economy
 default_version = '0.1.0'
 module_pathname = '$libdir/kerai'
 relocatable = false
+superuser = true
+trusted = false
 requires = 'ltree'
 schema = kerai

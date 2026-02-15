@@ -25,7 +25,7 @@ fn sql_escape(s: &str) -> String {
 }
 
 /// Bootstrap the self instance and wallet. Idempotent — skips if already exists.
-#[pg_extern(schema = "kerai")]
+#[pg_extern]
 fn bootstrap_instance() -> &'static str {
     // Check if self instance already exists
     let exists = Spi::get_one::<bool>(

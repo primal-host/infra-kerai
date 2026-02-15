@@ -1,7 +1,7 @@
 use pgrx::prelude::*;
 
 /// Returns JSON status of the Kerai instance
-#[pg_extern(schema = "kerai")]
+#[pg_extern]
 fn status() -> pgrx::JsonB {
     let instance_id = Spi::get_one::<String>(
         "SELECT id::text FROM kerai.instances WHERE is_self = true",
