@@ -39,7 +39,7 @@ fn reconstruct_crate(crate_name: &str) -> String {
 
 // Plan 04: CRDT Operations
 #[pg_extern(schema = "kerai")]
-fn apply_op(op_type: &str, node_id: pgrx::Uuid, payload: pgrx::JsonB) -> String {
+fn apply_op(op_type: &str, node_id: pgrx::Uuid, _payload: pgrx::JsonB) -> String {
     format!(
         "STUB: apply_op('{}', '{}', ...) — implemented in Plan 04",
         op_type, node_id

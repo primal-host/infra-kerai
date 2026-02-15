@@ -7,7 +7,7 @@ mod schema;
 mod workers;
 
 #[pgrx::pg_guard]
-pub extern "C" fn _PG_init() {
+pub extern "C-unwind" fn _PG_init() {
     workers::register_workers();
 }
 

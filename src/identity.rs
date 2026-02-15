@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ed25519_dalek::{Signer, SigningKey, Verifier, VerifyingKey};
 use pgrx::prelude::*;
 use sha2::{Digest, Sha256};
