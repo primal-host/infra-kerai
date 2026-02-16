@@ -57,7 +57,7 @@ CREATE TABLE associations (
 -- Agent registry
 -- An agent's identity (what it is, what model it uses) is separate from its
 -- wallet (Plan 01). The wallet_id links an agent to its financial identity
--- for earning/spending credits in the knowledge economy.
+-- for earning/spending kōi in the knowledge economy.
 CREATE TABLE agents (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     wallet_id   uuid REFERENCES wallets(id), -- agent's wallet for economic transactions (Plan 01)
