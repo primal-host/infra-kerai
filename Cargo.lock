@@ -817,6 +817,7 @@ dependencies = [
  "ed25519-dalek",
  "pgrx",
  "pgrx-tests",
+ "prettyplease",
  "proc-macro2",
  "quote",
  "rand 0.8.5",
