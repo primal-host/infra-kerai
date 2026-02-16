@@ -18,6 +18,7 @@ mod kinds;
 mod metadata;
 #[allow(dead_code)]
 mod path_builder;
+pub mod markdown;
 
 use ast_walker::NodeRow;
 use path_builder::PathContext;
