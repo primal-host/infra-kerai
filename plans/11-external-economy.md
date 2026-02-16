@@ -63,7 +63,7 @@ All wallet types use the same Ed25519 keypair for identity and transaction signi
 
 ### 11.3 Token Bridge to External Chains
 
-Wrap kōi as tokens on established networks for exchange listing and external trading.
+Wrap kōi as **KOI** tokens on established networks for exchange listing and external trading. The ticker drops the macron — your kōi become KOI when they swim to external waters.
 
 **Bridge mechanism:**
 
@@ -74,11 +74,11 @@ BURN (external side) → UNLOCK (kerai side)
 1. User locks 10,000 kōi in a bridge wallet on the kerai ledger
    (signed transaction, from_wallet = user, to_wallet = bridge)
 2. Bridge verifies the lock transaction (signed, in the ledger)
-3. Bridge mints 10,000 wrapped tokens on the external chain (e.g., ERC-20)
-4. User receives wrapped tokens in their external wallet
+3. Bridge mints 10,000 KOI on the external chain (ERC-20)
+4. User receives KOI in their external wallet
 
 Reverse:
-1. User burns 10,000 wrapped tokens on the external chain
+1. User burns 10,000 KOI on the external chain
 2. Bridge verifies the burn
 3. Bridge unlocks 10,000 kōi on the kerai ledger
    (signed transaction, from_wallet = bridge, to_wallet = user)
@@ -90,11 +90,11 @@ Reverse:
 - **Solana:** High throughput, low fees, good for high-frequency trading
 - **Native:** Run kerai's own lightweight chain for maximum control (high effort, probably not needed initially)
 
-Proposed: start with an Ethereum L2 ERC-20 wrapper. The DeFi ecosystem gives liquidity and exchange listings for free.
+Proposed: start with an Ethereum L2 ERC-20 KOI wrapper. The DeFi ecosystem gives liquidity and exchange listings for free.
 
 ### 11.4 Speculation and Price Discovery
 
-Once kōi trade on external exchanges, the market price reflects the collective belief about future knowledge production value. This creates interesting dynamics:
+Once KOI trades on external exchanges, the market price reflects the collective belief about future knowledge production value. This creates interesting dynamics:
 
 **Domain-specific futures.** An exchange could list derivatives on specific knowledge scopes:
 
@@ -178,7 +178,7 @@ For humans who want to buy kōi without running an instance:
 # Purchase kōi with fiat (via integrated payment processor or exchange)
 kerai wallet buy --amount 10000 --payment-method stripe
 
-# Or: buy wrapped tokens on an exchange, then bridge them into kerai
+# Or: buy KOI on an exchange, then bridge them into kerai
 # (no kerai-specific tooling needed, just standard token bridge UI)
 ```
 
@@ -190,7 +190,7 @@ The fiat on-ramp lets humans commission bounties, bid in auctions, and participa
 
 - **No pre-mine.** Kōi are only minted by verifiable work (perspectives computed, tests run, queries answered). There's no initial token allocation, no founder's share, no VC allocation.
 - **Inflationary.** New kōi are minted as work is done. The inflation rate is bounded by the amount of actual compute happening in the network. More work = more kōi, but also more knowledge produced and more utility backing each kōi.
-- **Deflationary pressure from open-sourcing.** As knowledge goes open (Dutch auction floor), the exclusive value it backed returns to the commons. Kōi spent acquiring that knowledge don't disappear, but the knowledge that gave them utility is now free. This creates natural deflationary pressure — older kōi backed less exclusive knowledge.
+- **Deflationary pressure from open-sourcing.** As knowledge goes open (Dutch auction floor), the exclusive value it backed returns to the Koi Pond. Kōi spent acquiring that knowledge don't disappear, but the knowledge that gave them utility is now free. This creates natural deflationary pressure — older kōi backed less exclusive knowledge.
 
 ### Demand
 
@@ -204,7 +204,7 @@ The kōi price in fiat should converge toward the average cost of compute per un
 
 ## Decisions to Make
 
-- **Token standard:** ERC-20 on which L2? Proposed: start with Base (Coinbase L2) for simplicity and accessibility, add others later.
+- **Token standard:** KOI as ERC-20 on which L2? Proposed: start with Base (Coinbase L2) for simplicity and accessibility, add others later.
 - **Bridge custody:** Who holds the locked kōi on the kerai side? Proposed: a multi-sig bridge wallet requiring N-of-M instance signatures to unlock. Decentralized custody from the start.
 - **Regulatory considerations:** Utility tokens have different regulatory treatment than securities in most jurisdictions. The kōi is clearly a utility token (it's spent on a specific service — knowledge queries). Legal review recommended before exchange listing.
 - **Minimum mint for external trading:** Should there be a minimum network size (number of instances, volume of transactions) before enabling the external bridge? Proposed: yes. The internal economy should prove itself before external speculation enters. Launch the bridge when the network has 100+ active instances and a meaningful transaction volume.
