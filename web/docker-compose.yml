@@ -13,10 +13,36 @@ services:
       - infra
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.kerai-editor.rule=Host(`editor.localhost`) || Host(`editor.primal.host`)"
-      - "traefik.http.routers.kerai-editor.entrypoints=websecure"
+      # Production (HTTPS)
+      - "traefik.http.routers.kerai-editor.rule=Host(`kerai.primal.host`)"
+      - "traefik.http.routers.kerai-editor.entrypoints=https"
       - "traefik.http.routers.kerai-editor.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.kerai-editor.middlewares=noknok-auth@docker"
+      # Production HTTP->HTTPS redirect
+      - "traefik.http.routers.kerai-editor-redirect.rule=Host(`kerai.primal.host`)"
+      - "traefik.http.routers.kerai-editor-redirect.entrypoints=http"
+      - "traefik.http.routers.kerai-editor-redirect.middlewares=https-redirect@docker"
+      # Local (HTTP)
+      - "traefik.http.routers.kerai-editor-local.rule=Host(`kerai.localhost`)"
+      - "traefik.http.routers.kerai-editor-local.entrypoints=http"
+      - "traefik.http.routers.kerai-editor-local.middlewares=noknok-auth@docker"
+      # ker.ai redirect (HTTPS)
+      - "traefik.http.routers.kerai-domain.rule=Host(`ker.ai`)"
+      - "traefik.http.routers.kerai-domain.entrypoints=https"
+      - "traefik.http.routers.kerai-domain.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.kerai-domain.middlewares=kerai-domain-redirect"
+      # ker.ai redirect (HTTP)
+      - "traefik.http.routers.kerai-domain-http.rule=Host(`ker.ai`)"
+      - "traefik.http.routers.kerai-domain-http.entrypoints=http"
+      - "traefik.http.routers.kerai-domain-http.middlewares=kerai-domain-redirect"
+      # ker.ai redirect middleware
+      - "traefik.http.middlewares.kerai-domain-redirect.redirectregex.regex=^https?://ker\\.ai(.*)"
+      - "traefik.http.middlewares.kerai-domain-redirect.redirectregex.replacement=https://kerai.primal.host$${1}"
+      - "traefik.http.middlewares.kerai-domain-redirect.redirectregex.permanent=true"
+      # Service
       - "traefik.http.services.kerai-editor.loadbalancer.server.port=3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
 
 networks:
