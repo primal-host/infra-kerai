@@ -5,6 +5,7 @@ mod crdt;
 mod functions;
 mod identity;
 mod parser;
+mod peers;
 mod reconstruct;
 mod schema;
 mod workers;
