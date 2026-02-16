@@ -9,6 +9,7 @@ pub mod info;
 pub mod init;
 pub mod log;
 pub mod market;
+pub mod model;
 pub mod peer;
 pub mod perspective;
 pub mod ping;
@@ -223,6 +224,44 @@ pub enum Command {
         work_type: String,
         reward: i64,
         enabled: Option<bool>,
+    },
+    ModelCreate {
+        agent: String,
+        dim: Option<i32>,
+        heads: Option<i32>,
+        layers: Option<i32>,
+        context_len: Option<i32>,
+        scope: Option<String>,
+    },
+    ModelTrain {
+        agent: String,
+        walks: Option<String>,
+        sequences: Option<i32>,
+        steps: Option<i32>,
+        lr: Option<f64>,
+        scope: Option<String>,
+        perspective_agent: Option<String>,
+    },
+    ModelPredict {
+        agent: String,
+        context: String,
+        top_k: Option<i32>,
+    },
+    ModelSearch {
+        agent: String,
+        query: String,
+        top_k: Option<i32>,
+    },
+    ModelEnsemble {
+        agents: String,
+        context: String,
+        top_k: Option<i32>,
+    },
+    ModelInfo {
+        agent: String,
+    },
+    ModelDelete {
+        agent: String,
     },
 }
 
@@ -465,5 +504,58 @@ pub fn run(
             reward,
             enabled,
         } => currency::set_reward(&mut client, &work_type, reward, enabled, format),
+        Command::ModelCreate {
+            agent,
+            dim,
+            heads,
+            layers,
+            context_len,
+            scope,
+        } => model::create(
+            &mut client,
+            &agent,
+            dim,
+            heads,
+            layers,
+            context_len,
+            scope.as_deref(),
+            format,
+        ),
+        Command::ModelTrain {
+            agent,
+            walks,
+            sequences,
+            steps,
+            lr,
+            scope,
+            perspective_agent,
+        } => model::train(
+            &mut client,
+            &agent,
+            walks.as_deref(),
+            sequences,
+            steps,
+            lr,
+            scope.as_deref(),
+            perspective_agent.as_deref(),
+            format,
+        ),
+        Command::ModelPredict {
+            agent,
+            context,
+            top_k,
+        } => model::predict(&mut client, &agent, &context, top_k, format),
+        Command::ModelSearch {
+            agent,
+            query,
+            top_k,
+        } => model::search(&mut client, &agent, &query, top_k, format),
+        Command::ModelEnsemble {
+            agents,
+            context,
+            top_k,
+        } => model::ensemble(&mut client, &agents, &context, top_k, format),
+        Command::ModelInfo { agent } => model::info(&mut client, &agent, format),
+        Command::ModelDelete { agent } => model::delete(&mut client, &agent, format),
     }
 }

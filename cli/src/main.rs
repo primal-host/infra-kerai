@@ -181,6 +181,12 @@ enum CliCommand {
         #[command(subcommand)]
         action: CurrencyAction,
     },
+
+    /// Manage MicroGPT neural models
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -547,6 +553,126 @@ enum AgentAction {
 }
 
 #[derive(Subcommand)]
+enum ModelAction {
+    /// Create a new neural model for an agent
+    Create {
+        /// Agent name
+        #[arg(long)]
+        agent: String,
+
+        /// Embedding dimension (default 32)
+        #[arg(long)]
+        dim: Option<i32>,
+
+        /// Number of attention heads (default 4)
+        #[arg(long)]
+        heads: Option<i32>,
+
+        /// Number of transformer layers (default 1)
+        #[arg(long)]
+        layers: Option<i32>,
+
+        /// Context length in nodes (default 16)
+        #[arg(long)]
+        context_len: Option<i32>,
+
+        /// Scope (ltree path) to build vocabulary from
+        #[arg(long)]
+        scope: Option<String>,
+    },
+
+    /// Train a model on graph walks
+    Train {
+        /// Agent name
+        #[arg(long)]
+        agent: String,
+
+        /// Walk type: tree, edge, perspective, random
+        #[arg(long)]
+        walks: Option<String>,
+
+        /// Number of walk sequences
+        #[arg(long)]
+        sequences: Option<i32>,
+
+        /// Number of training steps
+        #[arg(long)]
+        steps: Option<i32>,
+
+        /// Learning rate
+        #[arg(long)]
+        lr: Option<f64>,
+
+        /// Scope (ltree path) to generate walks within
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Agent name for perspective-weighted walks
+        #[arg(long)]
+        perspective_agent: Option<String>,
+    },
+
+    /// Predict next nodes given a context
+    Predict {
+        /// Agent name
+        #[arg(long)]
+        agent: String,
+
+        /// Comma-separated context node UUIDs
+        #[arg(long)]
+        context: String,
+
+        /// Number of predictions to return
+        #[arg(long)]
+        top_k: Option<i32>,
+    },
+
+    /// Neural-enhanced search
+    Search {
+        /// Agent name
+        #[arg(long)]
+        agent: String,
+
+        /// Search query text
+        #[arg(long)]
+        query: String,
+
+        /// Number of results to return
+        #[arg(long)]
+        top_k: Option<i32>,
+    },
+
+    /// Ensemble prediction from multiple models
+    Ensemble {
+        /// Comma-separated agent names
+        #[arg(long)]
+        agents: String,
+
+        /// Comma-separated context node UUIDs
+        #[arg(long)]
+        context: String,
+
+        /// Number of predictions to return
+        #[arg(long)]
+        top_k: Option<i32>,
+    },
+
+    /// Show model info and training history
+    Info {
+        /// Agent name
+        #[arg(long)]
+        agent: String,
+    },
+
+    /// Delete a model's weights and vocabulary
+    Delete {
+        /// Agent name
+        #[arg(long)]
+        agent: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum CurrencyAction {
     /// Register a wallet with a client-provided Ed25519 public key
     Register {
@@ -817,6 +943,69 @@ fn main() {
                 commands::Command::MarketCommons { scope, since }
             }
             MarketAction::Stats => commands::Command::MarketStats,
+        },
+        CliCommand::Model { action } => match action {
+            ModelAction::Create {
+                agent,
+                dim,
+                heads,
+                layers,
+                context_len,
+                scope,
+            } => commands::Command::ModelCreate {
+                agent,
+                dim,
+                heads,
+                layers,
+                context_len,
+                scope,
+            },
+            ModelAction::Train {
+                agent,
+                walks,
+                sequences,
+                steps,
+                lr,
+                scope,
+                perspective_agent,
+            } => commands::Command::ModelTrain {
+                agent,
+                walks,
+                sequences,
+                steps,
+                lr,
+                scope,
+                perspective_agent,
+            },
+            ModelAction::Predict {
+                agent,
+                context,
+                top_k,
+            } => commands::Command::ModelPredict {
+                agent,
+                context,
+                top_k,
+            },
+            ModelAction::Search {
+                agent,
+                query,
+                top_k,
+            } => commands::Command::ModelSearch {
+                agent,
+                query,
+                top_k,
+            },
+            ModelAction::Ensemble {
+                agents,
+                context,
+                top_k,
+            } => commands::Command::ModelEnsemble {
+                agents,
+                context,
+                top_k,
+            },
+            ModelAction::Info { agent } => commands::Command::ModelInfo { agent },
+            ModelAction::Delete { agent } => commands::Command::ModelDelete { agent },
         },
         CliCommand::Currency { action } => match action {
             CurrencyAction::Register {
