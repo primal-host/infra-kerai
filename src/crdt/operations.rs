@@ -21,6 +21,8 @@ const VALID_OP_TYPES: &[&str] = &[
     "delete_perspective",
     "set_association",
     "delete_association",
+    "create_task",
+    "update_task_status",
 ];
 
 /// Validate that op_type is known and node_id requirements are met.
@@ -36,6 +38,8 @@ pub fn validate_op(op_type: &str, node_id: Option<&str>, _payload: &Value) {
         "delete_perspective",
         "set_association",
         "delete_association",
+        "create_task",
+        "update_task_status",
     ];
     if !no_node_id_ops.contains(&op_type) && node_id.is_none() {
         error!("op_type '{}' requires a node_id", op_type);
@@ -86,6 +90,8 @@ pub fn apply(
         "delete_perspective" => apply_delete_perspective(payload),
         "set_association" => apply_set_association(payload),
         "delete_association" => apply_delete_association(payload),
+        "create_task" => apply_create_task(payload),
+        "update_task_status" => apply_update_task_status(payload),
         _ => error!("Unknown op_type: '{}'", op_type),
     }
 }
@@ -389,6 +395,69 @@ fn apply_set_association(payload: &Value) -> String {
     .unwrap()
     .unwrap();
     aid
+}
+
+/// INSERT a new task. Returns the generated task UUID.
+fn apply_create_task(payload: &Value) -> String {
+    let description = payload["description"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_task requires 'description' in payload"));
+    let success_command = payload["success_command"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_task requires 'success_command' in payload"));
+
+    let scope_sql = match payload.get("scope_node_id").and_then(|v| v.as_str()) {
+        Some(s) => format!("'{}'::uuid", sql_escape(s)),
+        None => "NULL".to_string(),
+    };
+    let budget_ops_sql = match payload.get("budget_ops").and_then(|v| v.as_i64()) {
+        Some(b) => b.to_string(),
+        None => "NULL".to_string(),
+    };
+    let budget_seconds_sql = match payload.get("budget_seconds").and_then(|v| v.as_i64()) {
+        Some(b) => b.to_string(),
+        None => "NULL".to_string(),
+    };
+
+    let task_id = Spi::get_one::<String>(&format!(
+        "INSERT INTO kerai.tasks (description, success_command, scope_node_id, budget_ops, budget_seconds)
+         VALUES ('{}', '{}', {}, {}, {})
+         RETURNING id::text",
+        sql_escape(description),
+        sql_escape(success_command),
+        scope_sql,
+        budget_ops_sql,
+        budget_seconds_sql,
+    ))
+    .unwrap()
+    .unwrap();
+    task_id
+}
+
+/// UPDATE a task's status. Returns the task UUID.
+fn apply_update_task_status(payload: &Value) -> String {
+    let task_id = payload["task_id"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_task_status requires 'task_id' in payload"));
+    let new_status = payload["new_status"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_task_status requires 'new_status' in payload"));
+
+    let valid_statuses = ["pending", "running", "succeeded", "failed", "stopped"];
+    if !valid_statuses.contains(&new_status) {
+        error!(
+            "Invalid task status '{}'. Must be one of: pending, running, succeeded, failed, stopped",
+            new_status
+        );
+    }
+
+    Spi::run(&format!(
+        "UPDATE kerai.tasks SET status = '{}', updated_at = now() WHERE id = '{}'::uuid",
+        sql_escape(new_status),
+        sql_escape(task_id),
+    ))
+    .unwrap();
+    task_id.to_string()
 }
 
 /// DELETE an association. Returns the agent_id.
