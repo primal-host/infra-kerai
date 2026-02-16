@@ -5,6 +5,7 @@ mod bootstrap;
 mod bounties;
 mod consensus;
 mod crdt;
+mod currency;
 mod economy;
 mod functions;
 mod identity;
@@ -2759,6 +2760,384 @@ impl Config {
             bounty_id,
         ))
         .unwrap();
+    }
+
+    // --- Plan 13: Native Currency tests ---
+
+    /// Helper: generate a test Ed25519 keypair. Returns (signing_key, public_key_hex).
+    fn generate_currency_keypair() -> (ed25519_dalek::SigningKey, String) {
+        let mut rng = rand::rngs::OsRng;
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+        let verifying_key = signing_key.verifying_key();
+        let pk_hex: String = verifying_key
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        (signing_key, pk_hex)
+    }
+
+    #[pg_test]
+    fn test_register_wallet_currency() {
+        let (_sk, pk_hex) = generate_currency_keypair();
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.register_wallet('{}', 'human', 'Alice Currency')",
+            pk_hex,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["wallet_type"].as_str().unwrap(), "human");
+        assert_eq!(obj["label"].as_str().unwrap(), "Alice Currency");
+        assert!(obj.contains_key("id"));
+        assert!(obj.contains_key("key_fingerprint"));
+        assert_eq!(obj["nonce"].as_i64().unwrap(), 0);
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Invalid public key")]
+    fn test_register_wallet_invalid_key() {
+        Spi::run("SELECT kerai.register_wallet('deadbeef', 'human', NULL)")
+            .unwrap();
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "duplicate key value violates unique constraint")]
+    fn test_register_wallet_duplicate_key() {
+        let (_sk, pk_hex) = generate_currency_keypair();
+        Spi::run(&format!(
+            "SELECT kerai.register_wallet('{}', 'human', 'First')",
+            pk_hex,
+        ))
+        .unwrap();
+        // Same pubkey again should fail (unique fingerprint)
+        Spi::run(&format!(
+            "SELECT kerai.register_wallet('{}', 'external', 'Second')",
+            pk_hex,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    fn test_signed_transfer() {
+        use ed25519_dalek::Signer;
+
+        let (sk, pk_hex) = generate_currency_keypair();
+
+        // Register wallet with this keypair
+        let wallet = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.register_wallet('{}', 'human', 'Signer')",
+            pk_hex,
+        ))
+        .unwrap()
+        .unwrap();
+        let from_id = wallet.0["id"].as_str().unwrap().to_string();
+
+        // Mint some kōi to the registered wallet
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 500, 'seed', NULL, NULL)",
+            from_id,
+        ))
+        .unwrap();
+
+        // Get self wallet as destination
+        let to_id = get_self_wallet_id();
+
+        // Sign the transfer message: "transfer:{from}:{to}:{amount}:{nonce}"
+        let message = format!("transfer:{}:{}:100:1", from_id, to_id);
+        let signature = sk.sign(message.as_bytes());
+        let sig_hex: String = signature
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.signed_transfer('{}'::uuid, '{}'::uuid, 100, 1, '{}', 'test payment')",
+            from_id, to_id, sig_hex,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["amount"].as_i64().unwrap(), 100);
+
+        // Verify sender balance decreased
+        let sender_bal = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.get_wallet_balance('{}'::uuid)",
+            from_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(sender_bal.0["balance"].as_i64().unwrap(), 400);
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Invalid signature")]
+    fn test_signed_transfer_bad_signature() {
+        let (_sk, pk_hex) = generate_currency_keypair();
+        let wallet = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.register_wallet('{}', 'human', 'BadSig')",
+            pk_hex,
+        ))
+        .unwrap()
+        .unwrap();
+        let from_id = wallet.0["id"].as_str().unwrap().to_string();
+
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 100, 'seed', NULL, NULL)",
+            from_id,
+        ))
+        .unwrap();
+
+        let to_id = get_self_wallet_id();
+        // Bad signature (all zeros)
+        let bad_sig = "00".repeat(64);
+
+        Spi::run(&format!(
+            "SELECT kerai.signed_transfer('{}'::uuid, '{}'::uuid, 50, 1, '{}', NULL)",
+            from_id, to_id, bad_sig,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Invalid nonce")]
+    fn test_signed_transfer_bad_nonce() {
+        use ed25519_dalek::Signer;
+
+        let (sk, pk_hex) = generate_currency_keypair();
+        let wallet = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.register_wallet('{}', 'human', 'BadNonce')",
+            pk_hex,
+        ))
+        .unwrap()
+        .unwrap();
+        let from_id = wallet.0["id"].as_str().unwrap().to_string();
+
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 100, 'seed', NULL, NULL)",
+            from_id,
+        ))
+        .unwrap();
+
+        let to_id = get_self_wallet_id();
+        // Wrong nonce (5 instead of 1)
+        let message = format!("transfer:{}:{}:50:5", from_id, to_id);
+        let signature = sk.sign(message.as_bytes());
+        let sig_hex: String = signature
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+
+        Spi::run(&format!(
+            "SELECT kerai.signed_transfer('{}'::uuid, '{}'::uuid, 50, 5, '{}', NULL)",
+            from_id, to_id, sig_hex,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Insufficient balance")]
+    fn test_signed_transfer_insufficient_balance() {
+        use ed25519_dalek::Signer;
+
+        let (sk, pk_hex) = generate_currency_keypair();
+        let wallet = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.register_wallet('{}', 'human', 'Broke')",
+            pk_hex,
+        ))
+        .unwrap()
+        .unwrap();
+        let from_id = wallet.0["id"].as_str().unwrap().to_string();
+
+        // No mint — wallet has 0 balance
+        let to_id = get_self_wallet_id();
+        let message = format!("transfer:{}:{}:100:1", from_id, to_id);
+        let signature = sk.sign(message.as_bytes());
+        let sig_hex: String = signature
+            .to_bytes()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+
+        Spi::run(&format!(
+            "SELECT kerai.signed_transfer('{}'::uuid, '{}'::uuid, 100, 1, '{}', NULL)",
+            from_id, to_id, sig_hex,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    fn test_total_supply() {
+        let wallet_id = get_self_wallet_id();
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 1000, 'supply test', NULL, NULL)",
+            wallet_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>("SELECT kerai.total_supply()")
+            .unwrap()
+            .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert!(obj["total_supply"].as_i64().unwrap() >= 1000);
+        assert!(obj["total_minted"].as_i64().unwrap() >= 1000);
+        assert!(obj["total_transactions"].as_i64().unwrap() >= 1);
+    }
+
+    #[pg_test]
+    fn test_wallet_share() {
+        let wallet_id = get_self_wallet_id();
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 500, 'share test', NULL, NULL)",
+            wallet_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.wallet_share('{}'::uuid)",
+            wallet_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert!(obj["balance"].as_i64().unwrap() > 0);
+        assert!(obj["total_supply"].as_i64().unwrap() > 0);
+        let share = obj["share"].as_str().unwrap();
+        let share_val: f64 = share.parse().unwrap();
+        assert!(share_val > 0.0 && share_val <= 1.0, "Share should be between 0 and 1, got {}", share_val);
+    }
+
+    #[pg_test]
+    fn test_supply_info() {
+        let result = Spi::get_one::<pgrx::JsonB>("SELECT kerai.supply_info()")
+            .unwrap()
+            .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert!(obj.contains_key("total_supply"));
+        assert!(obj.contains_key("wallet_count"));
+        assert!(obj.contains_key("top_holders"));
+        assert!(obj.contains_key("recent_mints"));
+        assert!(obj["wallet_count"].as_i64().unwrap() >= 1);
+    }
+
+    #[pg_test]
+    fn test_mint_reward() {
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.mint_reward('parse_file', '{\"file\": \"test.rs\"}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["work_type"].as_str().unwrap(), "parse_file");
+        assert_eq!(obj["reward"].as_i64().unwrap(), 10);
+        assert!(obj.contains_key("ledger_id"));
+        assert!(obj.contains_key("wallet_id"));
+
+        // Verify reward_log entry exists
+        let log_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.reward_log WHERE work_type = 'parse_file'",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(log_count >= 1, "Should have at least 1 reward_log entry");
+    }
+
+    #[pg_test]
+    fn test_mint_reward_disabled() {
+        // Disable a work type
+        Spi::run("UPDATE kerai.reward_schedule SET enabled = false WHERE work_type = 'peer_sync'")
+            .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.mint_reward('peer_sync', NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(result.0.is_null(), "Disabled work type should return null");
+    }
+
+    #[pg_test]
+    fn test_evaluate_mining() {
+        let result = Spi::get_one::<pgrx::JsonB>("SELECT kerai.evaluate_mining()")
+            .unwrap()
+            .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert!(obj["evaluated"].as_bool().unwrap());
+        assert!(obj.contains_key("mints"));
+    }
+
+    #[pg_test]
+    fn test_get_reward_schedule() {
+        let result = Spi::get_one::<pgrx::JsonB>("SELECT kerai.get_reward_schedule()")
+            .unwrap()
+            .unwrap();
+        let arr = result.0.as_array().unwrap();
+        assert!(arr.len() >= 6, "Should have at least 6 seed schedule entries, got {}", arr.len());
+
+        // Verify parse_file entry
+        let parse_file = arr.iter().find(|v| v["work_type"].as_str() == Some("parse_file")).unwrap();
+        assert_eq!(parse_file["reward"].as_i64().unwrap(), 10);
+        assert!(parse_file["enabled"].as_bool().unwrap());
+    }
+
+    #[pg_test]
+    fn test_set_reward() {
+        // Create a new reward type
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.set_reward('custom_work', 42, true)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["work_type"].as_str().unwrap(), "custom_work");
+        assert_eq!(obj["reward"].as_i64().unwrap(), 42);
+        assert!(obj["enabled"].as_bool().unwrap());
+
+        // Update it
+        let updated = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.set_reward('custom_work', 100, false)",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(updated.0["reward"].as_i64().unwrap(), 100);
+        assert!(!updated.0["enabled"].as_bool().unwrap());
+    }
+
+    #[pg_test]
+    fn test_auto_mint_on_parse() {
+        // Get supply before
+        let before = Spi::get_one::<pgrx::JsonB>("SELECT kerai.total_supply()")
+            .unwrap()
+            .unwrap();
+        let supply_before = before.0["total_supply"].as_i64().unwrap();
+
+        // Parse source (should trigger auto-mint)
+        Spi::run("SELECT kerai.parse_source('fn auto_mint_test() {}', 'auto_mint.rs')")
+            .unwrap();
+
+        // Get supply after
+        let after = Spi::get_one::<pgrx::JsonB>("SELECT kerai.total_supply()")
+            .unwrap()
+            .unwrap();
+        let supply_after = after.0["total_supply"].as_i64().unwrap();
+
+        assert!(
+            supply_after > supply_before,
+            "Supply should increase after parsing: before={}, after={}",
+            supply_before,
+            supply_after,
+        );
+    }
+
+    #[pg_test]
+    fn test_status_includes_supply() {
+        let status = Spi::get_one::<pgrx::JsonB>("SELECT kerai.status()")
+            .unwrap()
+            .unwrap();
+        let obj = status.0.as_object().unwrap();
+        assert!(obj.contains_key("total_supply"), "Status should include total_supply");
+        assert!(obj.contains_key("instance_balance"), "Status should include instance_balance");
     }
 
     /// sql_escape helper for tests
