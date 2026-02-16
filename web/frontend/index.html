@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>kerai editor</title>
+  <link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="toolbar">
+      <div class="toolbar-group">
+        <select id="doc-select">
+          <option value="">New Document</option>
+        </select>
+        <button id="btn-save" title="Save">Save</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="btn-h1" title="Heading 1">H1</button>
+        <button id="btn-h2" title="Heading 2">H2</button>
+        <button id="btn-h3" title="Heading 3">H3</button>
+        <button id="btn-bold" title="Bold">B</button>
+        <button id="btn-italic" title="Italic">I</button>
+        <button id="btn-code" title="Code Block">Code</button>
+        <button id="btn-bullet" title="Bullet List">List</button>
+        <button id="btn-blockquote" title="Blockquote">Quote</button>
+      </div>
+      <div class="toolbar-group">
+        <input id="search-input" type="text" placeholder="Search..." />
+      </div>
+    </header>
+    <div id="main">
+      <div id="editor"></div>
+      <aside id="sidebar">
+        <h3>Suggestions</h3>
+        <div id="suggestions"></div>
+      </aside>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
