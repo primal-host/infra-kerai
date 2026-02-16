@@ -86,7 +86,8 @@ fn apply_insert_node(payload: &Value, instance_id: &str) -> String {
     let parent_id = payload.get("parent_id").and_then(|v| v.as_str());
     let position = payload.get("position").and_then(|v| v.as_i64()).unwrap_or(0);
     let path = payload.get("path").and_then(|v| v.as_str());
-    let metadata = payload.get("metadata").unwrap_or(&Value::Object(serde_json::Map::new()));
+    let empty_obj = Value::Object(serde_json::Map::new());
+    let metadata = payload.get("metadata").unwrap_or(&empty_obj);
 
     let lang_sql = match language {
         Some(l) => format!("'{}'", sql_escape(l)),
@@ -237,7 +238,8 @@ fn apply_insert_edge(source_id: &str, payload: &Value) {
     let relation = payload["relation"]
         .as_str()
         .unwrap_or_else(|| error!("insert_edge requires 'relation' in payload"));
-    let metadata = payload.get("metadata").unwrap_or(&Value::Object(serde_json::Map::new()));
+    let empty_obj = Value::Object(serde_json::Map::new());
+    let metadata = payload.get("metadata").unwrap_or(&empty_obj);
     let meta_str = sql_escape(&metadata.to_string());
 
     Spi::run(&format!(
