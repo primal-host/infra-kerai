@@ -542,7 +542,7 @@ impl MicroGPT {
         // --- Embedding gradients ---
         // d_x is now [seq, dim] gradient at the embedding level
         // d_token_emb: scatter-add d_x into rows indexed by tokens
-        let mut d_token_emb = d_token_emb_from_head; // already has lm_head contribution
+        let d_token_emb = d_token_emb_from_head; // already has lm_head contribution
         let tokens: Vec<usize> = (0..seq_len)
             .map(|i| {
                 // We need the original token indices — reconstruct from embedded - pos

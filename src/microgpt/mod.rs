@@ -52,23 +52,23 @@ fn load_weights(agent_id: &str, config: &ModelConfig) -> Result<MicroGPT, String
         "SELECT tensor_name, tensor_data, shape FROM kerai.model_weights WHERE agent_id = '{agent_id}'::uuid"
     );
     Spi::connect(|client| {
-        let tup_table = client.select(&sql, None, None)
+        let tup_table = client.select(&sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            let name: String = row.get_by_name("tensor_name")
+            let name: String = row.get_by_name::<String, _>("tensor_name")
                 .map_err(|e| format!("column error: {e}"))?
-                .ok_or("null tensor_name")?;
-            let data_bytes: Vec<u8> = row.get_by_name("tensor_data")
+                .ok_or_else(|| "null tensor_name".to_string())?;
+            let data_bytes: Vec<u8> = row.get_by_name::<Vec<u8>, _>("tensor_data")
                 .map_err(|e| format!("column error: {e}"))?
-                .ok_or("null tensor_data")?;
-            let shape_i32: Vec<i32> = row.get_by_name("shape")
+                .ok_or_else(|| "null tensor_data".to_string())?;
+            let shape_i32: Vec<i32> = row.get_by_name::<Vec<i32>, _>("shape")
                 .map_err(|e| format!("column error: {e}"))?
-                .ok_or("null shape")?;
+                .ok_or_else(|| "null shape".to_string())?;
             let shape: Vec<usize> = shape_i32.iter().map(|&s| s as usize).collect();
             let tensor = Tensor::from_bytes(&data_bytes, shape);
             weight_map.insert(name, tensor);
         }
-        Ok(())
+        Ok::<(), String>(())
     })?;
 
     if weight_map.is_empty() {
@@ -85,7 +85,7 @@ fn load_model_config(agent_id: &str) -> Result<ModelConfig, String> {
     );
     let config_str = Spi::get_one::<String>(&sql)
         .map_err(|e| format!("SPI error: {e}"))?
-        .ok_or("No config found")?;
+        .ok_or_else(|| "No config found".to_string())?;
     let config_json: serde_json::Value =
         serde_json::from_str(&config_str).map_err(|e| format!("JSON parse error: {e}"))?;
 
@@ -390,17 +390,17 @@ fn neural_search(
     let mut candidates: Vec<(String, f64, String, String)> = Vec::new();
     Spi::connect(|client| {
         let tup_table = client
-            .select(&fts_sql, None, None)
+            .select(&fts_sql, None, &[])
             .unwrap_or_else(|e| error!("FTS query failed: {e}"));
         for row in tup_table {
-            let id: String = row.get_by_name("id").ok().flatten().unwrap_or_default();
+            let id: String = row.get_by_name::<String, _>("id").ok().flatten().unwrap_or_default();
             let rank: f64 = row
-                .get_by_name::<f32>("rank")
+                .get_by_name::<f32, _>("rank")
                 .ok()
                 .flatten()
                 .unwrap_or(0.0) as f64;
-            let kind: String = row.get_by_name("kind").ok().flatten().unwrap_or_default();
-            let path: String = row.get_by_name("path").ok().flatten().unwrap_or_default();
+            let kind: String = row.get_by_name::<String, _>("kind").ok().flatten().unwrap_or_default();
+            let path: String = row.get_by_name::<String, _>("path").ok().flatten().unwrap_or_default();
             candidates.push((id, rank, kind, path));
         }
     });
@@ -623,13 +623,13 @@ fn model_info(agent_name: &str) -> pgrx::JsonB {
     );
     let mut runs = Vec::new();
     Spi::connect(|client| {
-        if let Ok(tup_table) = client.select(&history_sql, None, None) {
+        if let Ok(tup_table) = client.select(&history_sql, None, &[]) {
             for row in tup_table {
-                let walk: String = row.get_by_name("walk_type").ok().flatten().unwrap_or_default();
-                let steps: i32 = row.get_by_name("n_steps").ok().flatten().unwrap_or(0);
-                let loss: f64 = row.get_by_name("final_loss").ok().flatten().unwrap_or(0.0);
-                let dur: i32 = row.get_by_name("duration_ms").ok().flatten().unwrap_or(0);
-                let ts: String = row.get_by_name("created_at").ok().flatten().unwrap_or_default();
+                let walk: String = row.get_by_name::<String, _>("walk_type").ok().flatten().unwrap_or_default();
+                let steps: i32 = row.get_by_name::<i32, _>("n_steps").ok().flatten().unwrap_or(0);
+                let loss: f64 = row.get_by_name::<f64, _>("final_loss").ok().flatten().unwrap_or(0.0);
+                let dur: i32 = row.get_by_name::<i32, _>("duration_ms").ok().flatten().unwrap_or(0);
+                let ts: String = row.get_by_name::<String, _>("created_at").ok().flatten().unwrap_or_default();
                 runs.push(serde_json::json!({
                     "walk_type": walk, "n_steps": steps,
                     "final_loss": loss, "duration_ms": dur, "created_at": ts,

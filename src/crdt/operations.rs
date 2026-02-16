@@ -844,11 +844,9 @@ fn apply_update_model_weights(payload: &Value) -> String {
         .unwrap_or_else(|| error!("update_model_weights requires 'delta' (base64) in payload"));
 
     // Decode delta
-    let delta_bytes = base64::Engine::decode(
-        &base64::engine::general_purpose::STANDARD,
-        delta_b64,
-    )
-    .unwrap_or_else(|e| error!("Invalid base64 delta: {e}"));
+    let delta_bytes = base64::engine::general_purpose::STANDARD
+        .decode(delta_b64)
+        .unwrap_or_else(|e| error!("Invalid base64 delta: {e}"));
 
     if delta_bytes.len() % 4 != 0 {
         error!("Delta byte length must be a multiple of 4");
@@ -869,9 +867,9 @@ fn apply_update_model_weights(payload: &Value) -> String {
 
     let mut current_bytes: Option<Vec<u8>> = None;
     Spi::connect(|client| {
-        if let Ok(tup_table) = client.select(&load_sql, None, None) {
+        if let Ok(tup_table) = client.select(&load_sql, None, &[]) {
             for row in tup_table {
-                current_bytes = row.get_by_name("tensor_data").ok().flatten();
+                current_bytes = row.get_by_name::<Vec<u8>, _>("tensor_data").ok().flatten();
             }
         }
     });
@@ -975,9 +973,8 @@ fn apply_train_step(payload: &Value) -> String {
     let agent_id = payload["agent_id"]
         .as_str()
         .unwrap_or_else(|| error!("train_step requires 'agent_id' in payload"));
-    let config = payload
-        .get("config")
-        .unwrap_or(&Value::Object(serde_json::Map::new()));
+    let empty_config = Value::Object(serde_json::Map::new());
+    let config = payload.get("config").unwrap_or(&empty_config);
     let walk_type = payload["walk_type"].as_str().unwrap_or("tree");
     let n_sequences = payload["n_sequences"].as_i64().unwrap_or(0);
     let n_steps = payload["n_steps"].as_i64().unwrap_or(0);

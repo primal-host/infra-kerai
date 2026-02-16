@@ -23,10 +23,10 @@ pub fn build_vocab(agent_id: &str, scope: Option<&str>) -> Result<usize, String>
     let mut node_ids: Vec<String> = Vec::new();
     Spi::connect(|client| {
         let tup_table = client
-            .select(&select_sql, None, None)
+            .select(&select_sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            if let Ok(Some(id)) = row.get_by_name::<String>("id") {
+            if let Ok(Some(id)) = row.get_by_name::<String, _>("id") {
                 node_ids.push(id);
             }
         }
@@ -80,10 +80,10 @@ pub fn uuids_to_indices(agent_id: &str, uuids: &[String]) -> Result<Vec<usize>, 
     let mut indices = Vec::new();
     Spi::connect(|client| {
         let tup_table = client
-            .select(&sql, None, None)
+            .select(&sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            if let Ok(Some(idx)) = row.get_by_name::<i32>("token_idx") {
+            if let Ok(Some(idx)) = row.get_by_name::<i32, _>("token_idx") {
                 indices.push(idx as usize);
             }
         }
@@ -114,17 +114,17 @@ pub fn indices_to_uuids(
     let mut idx_to_uuid = std::collections::HashMap::new();
     Spi::connect(|client| {
         let tup_table = client
-            .select(&sql, None, None)
+            .select(&sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
             let idx: i32 = row
-                .get_by_name("token_idx")
+                .get_by_name::<i32, _>("token_idx")
                 .map_err(|e| format!("column error: {e}"))?
-                .ok_or("null token_idx")?;
+                .ok_or_else(|| "null token_idx".to_string())?;
             let uuid: String = row
-                .get_by_name("node_id")
+                .get_by_name::<String, _>("node_id")
                 .map_err(|e| format!("column error: {e}"))?
-                .ok_or("null node_id")?;
+                .ok_or_else(|| "null node_id".to_string())?;
             idx_to_uuid.insert(idx as usize, uuid);
         }
         Ok::<(), String>(())
@@ -193,10 +193,10 @@ fn generate_tree_walks(
     let mut root_indices: Vec<usize> = Vec::new();
     Spi::connect(|client| {
         let tup_table = client
-            .select(&roots_sql, None, None)
+            .select(&roots_sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            if let Ok(Some(idx)) = row.get_by_name::<i32>("token_idx") {
+            if let Ok(Some(idx)) = row.get_by_name::<i32, _>("token_idx") {
                 root_indices.push(idx as usize);
             }
         }
@@ -221,11 +221,11 @@ fn generate_tree_walks(
         std::collections::HashMap::new();
     Spi::connect(|client| {
         let tup_table = client
-            .select(&children_sql, None, None)
+            .select(&children_sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            let parent: i32 = row.get_by_name("parent_idx").ok().flatten().unwrap_or(-1);
-            let child: i32 = row.get_by_name("child_idx").ok().flatten().unwrap_or(-1);
+            let parent: i32 = row.get_by_name::<i32, _>("parent_idx").ok().flatten().unwrap_or(-1);
+            let child: i32 = row.get_by_name::<i32, _>("child_idx").ok().flatten().unwrap_or(-1);
             if parent >= 0 && child >= 0 {
                 children_map
                     .entry(parent as usize)
@@ -297,11 +297,11 @@ fn generate_edge_walks(
 
     Spi::connect(|client| {
         let tup_table = client
-            .select(&edge_sql, None, None)
+            .select(&edge_sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            let src: i32 = row.get_by_name("src_idx").ok().flatten().unwrap_or(-1);
-            let tgt: i32 = row.get_by_name("tgt_idx").ok().flatten().unwrap_or(-1);
+            let src: i32 = row.get_by_name::<i32, _>("src_idx").ok().flatten().unwrap_or(-1);
+            let tgt: i32 = row.get_by_name::<i32, _>("tgt_idx").ok().flatten().unwrap_or(-1);
             if src >= 0 && tgt >= 0 {
                 adj.entry(src as usize).or_default().push(tgt as usize);
                 if !all_nodes.contains(&(src as usize)) {
@@ -390,12 +390,12 @@ fn generate_perspective_walks(
 
     Spi::connect(|client| {
         let tup_table = client
-            .select(&adj_sql, None, None)
+            .select(&adj_sql, None, &[])
             .map_err(|e| format!("SPI error: {e}"))?;
         for row in tup_table {
-            let src: i32 = row.get_by_name("src_idx").ok().flatten().unwrap_or(-1);
-            let tgt: i32 = row.get_by_name("tgt_idx").ok().flatten().unwrap_or(-1);
-            let weight: f64 = row.get_by_name("weight").ok().flatten().unwrap_or(0.0);
+            let src: i32 = row.get_by_name::<i32, _>("src_idx").ok().flatten().unwrap_or(-1);
+            let tgt: i32 = row.get_by_name::<i32, _>("tgt_idx").ok().flatten().unwrap_or(-1);
+            let weight: f64 = row.get_by_name::<f64, _>("weight").ok().flatten().unwrap_or(0.0);
             if src >= 0 && tgt >= 0 {
                 adj.entry(src as usize)
                     .or_default()
@@ -487,13 +487,13 @@ fn generate_random_walks(
 
     // Collect from both sources
     Spi::connect(|client| {
-        for sql in &[&tree_sql, &edge_sql] {
+        for sql in [&tree_sql, &edge_sql] {
             let tup_table = client
-                .select(sql, None, None)
+                .select(sql.as_str(), None, &[])
                 .map_err(|e| format!("SPI error: {e}"))?;
             for row in tup_table {
-                let src: i32 = row.get_by_name("src_idx").ok().flatten().unwrap_or(-1);
-                let tgt: i32 = row.get_by_name("tgt_idx").ok().flatten().unwrap_or(-1);
+                let src: i32 = row.get_by_name::<i32, _>("src_idx").ok().flatten().unwrap_or(-1);
+                let tgt: i32 = row.get_by_name::<i32, _>("tgt_idx").ok().flatten().unwrap_or(-1);
                 if src >= 0 && tgt >= 0 {
                     adj.entry(src as usize).or_default().push(tgt as usize);
                     // Also add reverse direction for random walks
