@@ -379,6 +379,114 @@ The hard parts are the parser (extracting structure from PDFs) and tuning the pe
 
 ---
 
+## 4. The Bridge Architecture — kerai_web
+
+### Can a pgrx Extension Serve HTTP?
+
+Technically, yes. pgrx background workers run arbitrary Rust code, so a worker *could* bind a TCP socket and run an HTTP server (axum, hyper, etc.) inside the Postgres process. But this fights the design of Postgres:
+
+- Postgres manages its own process lifecycle — a background worker handling hundreds of HTTP connections creates resource contention
+- TLS termination, static file serving, WebSocket upgrades, connection pooling would all need reimplementation inside the extension
+- A crash in HTTP handling takes down a Postgres background worker, potentially affecting database stability
+- Postgres's shared memory model wasn't designed for web traffic patterns
+
+Possible but adversarial to the host. Not where you want to be.
+
+### What the Extension Already Does Well
+
+kerai pushes all logic into SQL-callable functions. Parsing, CRDT operations, queries, perspectives — they're all `#[pg_extern]` functions. From the database's perspective, the editor's operations are just:
+
+```sql
+SELECT kerai.insert_node('paragraph', 'ch3.sec1.para4', 'The claim is...');
+SELECT kerai.create_edge('cites', new_para_id, bib_entry_id);
+SELECT kerai.get_perspectives('technique_matcher', current_context_id);
+SELECT kerai.apply_operation(op_json);
+```
+
+The web layer's only job is translating between HTTP/WebSocket and these SQL calls. Genuinely thin.
+
+### The Bridge Architecture
+
+A translation layer, not an application server:
+
+```
+Browser (ProseMirror/TipTap editor)
+    |
+    |  WebSocket + HTTP
+    |
+Bridge (thin Rust or Go binary)
+    |
+    |  SQL (libpq / tokio-postgres)
+    |
+Postgres + kerai extension
+```
+
+**The bridge handles:**
+- HTTP → SQL translation (editor action → `kerai.insert_node()`)
+- WebSocket → LISTEN/NOTIFY relay (real-time collaboration)
+- Static file serving (the editor's HTML/JS/CSS)
+- TLS termination (or sit behind Traefik)
+- Auth (validate session, map to kerai wallet/identity)
+
+**The bridge does NOT handle:**
+- Parsing logic (extension)
+- CRDT operations (extension)
+- Perspective queries (extension)
+- Knowledge economy (extension)
+
+A few hundred lines of Rust. Closer to a protocol adapter than an application.
+
+### Real-Time Collaboration via Postgres Primitives
+
+Postgres already has the mechanism — `LISTEN/NOTIFY`:
+
+1. User A inserts a paragraph → bridge calls `kerai.insert_node()` → extension applies CRDT operation → triggers `NOTIFY kerai_ops, '{op_json}'`
+2. Bridge subscribes to `kerai_ops` channel → receives notification → relays via WebSocket to all connected editors
+3. User B's editor receives the operation → applies it locally
+
+The CRDT guarantee means operations commute — no conflict resolution in the bridge. It just relays.
+
+### Could It Be a Second Extension?
+
+Instead of a separate binary, the bridge *could* be a second pgrx extension — `kerai_web` — that:
+
+- Runs a background worker with a lightweight HTTP server
+- Serves only WebSocket/API endpoints (static files served by Traefik)
+- Has direct SPI access to kerai's functions (no network round-trip — it's *in* the database)
+- Uses Postgres's LISTEN/NOTIFY internally for event relay
+
+This avoids the "fighting Postgres" problems because:
+- Not serving arbitrary web traffic — just API calls from the editor
+- Connection count is bounded (editor sessions, not public internet)
+- WebSocket server is purpose-built and minimal
+- Static assets served by Traefik, not the extension
+
+The advantage: **zero-hop access to kerai**. The bridge doesn't connect to Postgres over a socket — it calls kerai functions directly via SPI. Latency drops from "HTTP → SQL parse → execute → serialize → HTTP" to "direct function call."
+
+### Recommended Path
+
+Given existing infrastructure (Traefik, Docker, Postgres on Homebrew):
+
+```
+Browser
+    |
+Traefik (TLS, static files, routing)
+    |
+    |-- /api/*  -->  kerai_web extension (background worker, HTTP/WS)
+    |                    |
+    |                    +-- SPI calls to kerai extension (zero hop)
+    |
+    +-- /*      -->  static files (editor JS/CSS/HTML)
+```
+
+**Phase 1:** Separate bridge binary. Fastest to develop, easiest to debug, conventional deployment. A few hundred lines of Rust with axum + tokio-postgres.
+
+**Phase 2:** Collapse the bridge into `kerai_web` extension once the API surface stabilizes. The bridge logic is already Rust, so porting into a pgrx background worker is straightforward. Gain the zero-hop SPI advantage.
+
+Either way, the editor's intelligence lives entirely in the kerai extension. The bridge — whether binary or second extension — is just translating protocols.
+
+---
+
 ## Meta-Observation
 
 This conversation itself is the kind of thought chain that should be a first-class object in kerai. Each section builds on the previous, cross-references the plans, introduces new concepts, and produces conclusions that weren't in any single input. The provenance is traceable: plans → question about books → extension to PDFs → product vision. Storing this as a flat markdown file is exactly the problem we're describing — the structure and relationships exist but are flattened into text.
