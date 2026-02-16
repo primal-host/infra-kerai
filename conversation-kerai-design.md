@@ -438,7 +438,7 @@ Each instance is a host. Nodes are resources with globally unique identifiers. `
 
 ## Value Exchange: Built-In Currency
 
-Computing AI perspectives has a cost. That computed knowledge has value to others. Without compensation, there's no incentive to share expensive computed knowledge. A built-in currency creates a natural marketplace where instances can specialize.
+Computing AI perspectives has a cost. That computed knowledge has value to others. Without compensation, there's no incentive to share expensive computed knowledge. A built-in currency — the **kōi** (好意, Japanese for "favor") — creates a natural marketplace where instances can specialize.
 
 ### Why the CRDT Log Is Already a Ledger
 
