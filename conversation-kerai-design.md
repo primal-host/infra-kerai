@@ -614,7 +614,7 @@ The progression from "AST-based VCS" to "autonomous knowledge economy" requires 
 5. **Value implies a market** — attestations, pricing, negotiation
 6. **A market implies autonomous actors** — AI agents producing, consuming, and trading knowledge
 7. **Private knowledge depreciates** — vast compute makes independent rediscovery inevitable
-8. **All knowledge trends toward open** — Dutch auctions formalize the depreciation, the commons grows monotonically
+8. **All knowledge trends toward open** — Dutch auctions formalize the depreciation, the Koi Pond grows monotonically
 
 Each step follows from the previous. The same schema, same CRDT sync, same cryptographic identity carries through the entire chain. The database that stores Go function declarations also stores knowledge valuations and economic transactions — because they're all just nodes, edges, and weighted relationships in the same graph.
 
@@ -641,7 +641,7 @@ PRIVATE → ATTESTED → AUCTIONED → SETTLED → OPEN
                Seller receives 12 × 25,000 = 300,000 kōi.
 5. OPEN:       After a configurable delay (default 24h), or when floor
                is hit, knowledge released to entire network for free.
-               It's now part of the commons.
+               It's now part of the Koi Pond.
 ```
 
 ### Why Dutch Auction, Not Fixed Price
@@ -665,7 +665,7 @@ The floor creates a natural pressure toward generosity. An instance sitting on k
 
 **Sellers face a real tradeoff:** Set starting price too high and nobody bids before the floor hits. Set it too low and you leave value on the table. Set the floor too high and you prevent the knowledge from going open (limiting network goodwill and future trading relationships). The market corrects bad estimates — historical settlement data tells you what knowledge in a given scope actually sells for.
 
-**The network gets richer either way.** Every auction resolves in one of two ways: buyers pay and the knowledge goes open shortly after, or the floor hits and the knowledge goes open for free. Either way, the commons grows. The only variable is whether the producer gets compensated first. Over time, the open knowledge base grows monotonically — it never shrinks.
+**The network gets richer either way.** Every auction resolves in one of two ways: buyers pay and the knowledge goes open shortly after, or the floor hits and the knowledge goes open for free. Either way, the Koi Pond grows. The only variable is whether the producer gets compensated first. Over time, the open knowledge base grows monotonically — it never shrinks.
 
 ### This Is a Self-Expiring Patent System
 
@@ -693,14 +693,14 @@ The foundation schema separates wallets from instances: a wallet is an Ed25519 k
 
 ### Token Bridge
 
-Kōi wrap as tokens on external chains (ERC-20 on an Ethereum L2, for example) via a lock/mint bridge:
+Kōi wrap as **KOI** tokens on external chains (ERC-20 on an Ethereum L2, for example) via a lock/mint bridge. The ticker drops the macron — your kōi become KOI when they swim to external waters.
 
 1. Lock kōi in a bridge wallet on the kerai ledger (signed, verifiable)
-2. Bridge mints equivalent wrapped tokens on the external chain
-3. Wrapped tokens trade on standard exchanges (Uniswap, etc.)
-4. To return: burn wrapped tokens, bridge unlocks kōi on kerai side
+2. Bridge mints equivalent KOI tokens on the external chain
+3. KOI trades on standard exchanges (Uniswap, etc.)
+4. To return: burn KOI, bridge unlocks kōi on kerai side
 
-This gives liquidity, exchange listings, and DeFi composability without building any of that infrastructure. The kerai ledger remains the source of truth; the wrapped token is a derivative.
+This gives liquidity, exchange listings, and DeFi composability without building any of that infrastructure. The kerai ledger remains the source of truth; the KOI token is a derivative.
 
 ### The Revenue Loop
 
@@ -733,7 +733,7 @@ Instances and agents compete to fill bounties. Verification is automated — run
 
 - **No pre-mine.** Kōi are only minted by verifiable work. No founder's allocation, no VC tokens.
 - **Inflationary.** New kōi minted as work is done. Inflation rate bounded by actual compute in the network.
-- **Deflationary pressure from open-sourcing.** As knowledge goes open (Dutch auction floor), the exclusive value backing those kōi returns to the commons.
+- **Deflationary pressure from open-sourcing.** As knowledge goes open (Dutch auction floor), the exclusive value backing those kōi returns to the Koi Pond.
 - **Equilibrium.** The kōi price in fiat converges toward compute cost parity — the average cost of producing a unit of knowledge. If kōi trade above this, it's cheaper to produce knowledge than buy kōi, so new instances enter. If below, instances reduce production. The market self-regulates.
 
 ### The Full Chain
@@ -745,7 +745,7 @@ external token → exchange price → fiat → infrastructure cost →
 more compute → more knowledge → more kōi
 ```
 
-The entire system is one self-reinforcing loop. Each element feeds the next. The currency is the blood that moves value through the loop, from knowledge producers to knowledge consumers and back again, with the commons growing at every turn.
+The entire system is one self-reinforcing loop. Each element feeds the next. The currency is the blood that moves value through the loop, from knowledge producers to knowledge consumers and back again, with the Koi Pond growing at every turn.
 
 ---
 
