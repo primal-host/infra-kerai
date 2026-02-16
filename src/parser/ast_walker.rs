@@ -104,6 +104,13 @@ fn to_token_string(tokens: impl quote::ToTokens) -> String {
     quote::quote!(#tokens).to_string()
 }
 
+/// Insert complete token representation into metadata for reconstruction.
+fn insert_source(meta: &mut Value, tokens: impl quote::ToTokens) {
+    if let Value::Object(ref mut m) = meta {
+        m.insert("source".into(), json!(to_token_string(tokens)));
+    }
+}
+
 /// Walk a syn::File and produce NodeRow/EdgeRow vectors.
 pub fn walk_file(
     file: &syn::File,
@@ -170,7 +177,8 @@ fn walk_item(ctx: &mut WalkCtx, item: &syn::Item, parent_id: &str, position: i32
 
 fn walk_fn(ctx: &mut WalkCtx, item_fn: &syn::ItemFn, parent_id: &str, position: i32) {
     let name = item_fn.sig.ident.to_string();
-    let meta = metadata::fn_metadata(&item_fn.sig, &item_fn.vis);
+    let mut meta = metadata::fn_metadata(&item_fn.sig, &item_fn.vis);
+    insert_source(&mut meta, item_fn);
     let span = item_fn.sig.ident.span();
 
     ctx.path_ctx.push(&name);
@@ -203,7 +211,8 @@ fn walk_fn(ctx: &mut WalkCtx, item_fn: &syn::ItemFn, parent_id: &str, position: 
 
 fn walk_struct(ctx: &mut WalkCtx, item: &syn::ItemStruct, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
-    let meta = metadata::struct_metadata(item, &item.vis);
+    let mut meta = metadata::struct_metadata(item, &item.vis);
+    insert_source(&mut meta, item);
     let span = item.ident.span();
 
     ctx.path_ctx.push(&name);
@@ -272,7 +281,8 @@ fn walk_field(ctx: &mut WalkCtx, field: &syn::Field, parent_id: &str, position: 
 
 fn walk_enum(ctx: &mut WalkCtx, item: &syn::ItemEnum, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
-    let meta = metadata::enum_metadata(item, &item.vis);
+    let mut meta = metadata::enum_metadata(item, &item.vis);
+    insert_source(&mut meta, item);
     let span = item.ident.span();
 
     ctx.path_ctx.push(&name);
@@ -339,7 +349,8 @@ fn walk_variant(ctx: &mut WalkCtx, variant: &syn::Variant, parent_id: &str, posi
 }
 
 fn walk_impl(ctx: &mut WalkCtx, item: &syn::ItemImpl, parent_id: &str, position: i32) {
-    let meta = metadata::impl_metadata(item);
+    let mut meta = metadata::impl_metadata(item);
+    insert_source(&mut meta, item);
     let self_ty = &item.self_ty;
     let self_ty_str = to_token_string(self_ty);
     let label = if let Some((_, ref trait_path, _)) = item.trait_ {
@@ -374,7 +385,8 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
     match item {
         syn::ImplItem::Fn(method) => {
             let name = method.sig.ident.to_string();
-            let meta = metadata::fn_metadata(&method.sig, &method.vis);
+            let mut meta = metadata::fn_metadata(&method.sig, &method.vis);
+            insert_source(&mut meta, method);
             let span = method.sig.ident.span();
 
             ctx.path_ctx.push(&name);
@@ -406,13 +418,15 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
         }
         syn::ImplItem::Const(c) => {
             let name = c.ident.to_string();
+            let mut meta = metadata::const_metadata(&c.vis);
+            insert_source(&mut meta, c);
             ctx.path_ctx.push(&name);
             ctx.new_node(
                 kinds::CONST,
                 Some(name),
                 Some(parent_id),
                 position,
-                metadata::const_metadata(&c.vis),
+                meta,
                 span_start_line(c.ident.span()),
                 span_end_line(c.ident.span()),
             );
@@ -420,13 +434,15 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
         }
         syn::ImplItem::Type(t) => {
             let name = t.ident.to_string();
+            let mut meta = json!({"visibility": metadata::visibility_str(&t.vis)});
+            insert_source(&mut meta, t);
             ctx.path_ctx.push(&name);
             ctx.new_node(
                 kinds::TYPE_ALIAS,
                 Some(name),
                 Some(parent_id),
                 position,
-                json!({"visibility": metadata::visibility_str(&t.vis)}),
+                meta,
                 span_start_line(t.ident.span()),
                 span_end_line(t.ident.span()),
             );
@@ -434,12 +450,14 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
         }
         syn::ImplItem::Macro(m) => {
             let mac_path = &m.mac.path;
+            let mut meta = json!({});
+            insert_source(&mut meta, m);
             ctx.new_node(
                 kinds::MACRO_CALL,
                 Some(to_token_string(mac_path)),
                 Some(parent_id),
                 position,
-                json!({}),
+                meta,
                 None,
                 None,
             );
@@ -460,7 +478,8 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
 
 fn walk_trait(ctx: &mut WalkCtx, item: &syn::ItemTrait, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
-    let meta = metadata::trait_metadata(item, &item.vis);
+    let mut meta = metadata::trait_metadata(item, &item.vis);
+    insert_source(&mut meta, item);
     let span = item.ident.span();
 
     ctx.path_ctx.push(&name);
@@ -489,7 +508,8 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
     match item {
         syn::TraitItem::Fn(method) => {
             let name = method.sig.ident.to_string();
-            let meta = metadata::fn_metadata(&method.sig, &syn::Visibility::Inherited);
+            let mut meta = metadata::fn_metadata(&method.sig, &syn::Visibility::Inherited);
+            insert_source(&mut meta, method);
             let span = method.sig.ident.span();
 
             ctx.path_ctx.push(&name);
@@ -519,13 +539,15 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
         }
         syn::TraitItem::Type(t) => {
             let name = t.ident.to_string();
+            let mut meta = json!({});
+            insert_source(&mut meta, t);
             ctx.path_ctx.push(&name);
             ctx.new_node(
                 kinds::TYPE_ALIAS,
                 Some(name),
                 Some(parent_id),
                 position,
-                json!({}),
+                meta,
                 span_start_line(t.ident.span()),
                 span_end_line(t.ident.span()),
             );
@@ -533,13 +555,15 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
         }
         syn::TraitItem::Const(c) => {
             let name = c.ident.to_string();
+            let mut meta = json!({});
+            insert_source(&mut meta, c);
             ctx.path_ctx.push(&name);
             ctx.new_node(
                 kinds::CONST,
                 Some(name),
                 Some(parent_id),
                 position,
-                json!({}),
+                meta,
                 span_start_line(c.ident.span()),
                 span_end_line(c.ident.span()),
             );
@@ -547,12 +571,14 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
         }
         syn::TraitItem::Macro(m) => {
             let mac_path = &m.mac.path;
+            let mut meta = json!({});
+            insert_source(&mut meta, m);
             ctx.new_node(
                 kinds::MACRO_CALL,
                 Some(to_token_string(mac_path)),
                 Some(parent_id),
                 position,
-                json!({}),
+                meta,
                 None,
                 None,
             );
@@ -579,6 +605,7 @@ fn walk_mod(ctx: &mut WalkCtx, item: &syn::ItemMod, parent_id: &str, position: i
         "visibility".into(),
         json!(metadata::visibility_str(&item.vis)),
     );
+    meta.insert("source".into(), json!(to_token_string(item)));
 
     let is_test = item.attrs.iter().any(|a| {
         if a.path().is_ident("cfg") {
@@ -617,7 +644,8 @@ fn walk_mod(ctx: &mut WalkCtx, item: &syn::ItemMod, parent_id: &str, position: i
 
 fn walk_use(ctx: &mut WalkCtx, item: &syn::ItemUse, parent_id: &str, position: i32) {
     let content = to_token_string(item);
-    let meta = metadata::use_metadata(&item.vis);
+    let mut meta = metadata::use_metadata(&item.vis);
+    insert_source(&mut meta, item);
 
     ctx.new_node(
         kinds::USE,
@@ -633,7 +661,8 @@ fn walk_use(ctx: &mut WalkCtx, item: &syn::ItemUse, parent_id: &str, position: i
 fn walk_const(ctx: &mut WalkCtx, item: &syn::ItemConst, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
     let span = item.ident.span();
-    let meta = metadata::const_metadata(&item.vis);
+    let mut meta = metadata::const_metadata(&item.vis);
+    insert_source(&mut meta, item);
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
@@ -651,7 +680,8 @@ fn walk_const(ctx: &mut WalkCtx, item: &syn::ItemConst, parent_id: &str, positio
 fn walk_static(ctx: &mut WalkCtx, item: &syn::ItemStatic, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
     let span = item.ident.span();
-    let meta = metadata::static_metadata(item);
+    let mut meta = metadata::static_metadata(item);
+    insert_source(&mut meta, item);
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
@@ -669,6 +699,8 @@ fn walk_static(ctx: &mut WalkCtx, item: &syn::ItemStatic, parent_id: &str, posit
 fn walk_type_alias(ctx: &mut WalkCtx, item: &syn::ItemType, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
     let span = item.ident.span();
+    let mut meta = json!({"visibility": metadata::visibility_str(&item.vis)});
+    insert_source(&mut meta, item);
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
@@ -676,7 +708,7 @@ fn walk_type_alias(ctx: &mut WalkCtx, item: &syn::ItemType, parent_id: &str, pos
         Some(name),
         Some(parent_id),
         position,
-        json!({"visibility": metadata::visibility_str(&item.vis)}),
+        meta,
         span_start_line(span),
         span_end_line(span),
     );
@@ -703,6 +735,7 @@ fn walk_macro(ctx: &mut WalkCtx, item: &syn::ItemMacro, parent_id: &str, positio
     if kind == kinds::MACRO_CALL {
         meta.insert("macro_path".into(), json!(name));
     }
+    meta.insert("source".into(), json!(to_token_string(item)));
 
     ctx.new_node(
         kind,
@@ -722,12 +755,14 @@ fn walk_extern_crate(
     position: i32,
 ) {
     let name = item.ident.to_string();
+    let mut meta = json!({"visibility": metadata::visibility_str(&item.vis)});
+    insert_source(&mut meta, item);
     ctx.new_node(
         kinds::EXTERN_CRATE,
         Some(name),
         Some(parent_id),
         position,
-        json!({"visibility": metadata::visibility_str(&item.vis)}),
+        meta,
         span_start_line(item.ident.span()),
         span_end_line(item.ident.span()),
     );
@@ -746,12 +781,14 @@ fn walk_foreign_mod(
         .map(|n| n.value())
         .unwrap_or_default();
 
+    let mut meta = json!({"abi": abi});
+    insert_source(&mut meta, item);
     ctx.new_node(
         kinds::FOREIGN_MOD,
         Some(format!("extern \"{}\"", abi)),
         Some(parent_id),
         position,
-        json!({"abi": abi}),
+        meta,
         None,
         None,
     );
@@ -760,6 +797,8 @@ fn walk_foreign_mod(
 fn walk_union(ctx: &mut WalkCtx, item: &syn::ItemUnion, parent_id: &str, position: i32) {
     let name = item.ident.to_string();
     let span = item.ident.span();
+    let mut meta = json!({"visibility": metadata::visibility_str(&item.vis)});
+    insert_source(&mut meta, item);
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
@@ -767,7 +806,7 @@ fn walk_union(ctx: &mut WalkCtx, item: &syn::ItemUnion, parent_id: &str, positio
         Some(name),
         Some(parent_id),
         position,
-        json!({"visibility": metadata::visibility_str(&item.vis)}),
+        meta,
         span_start_line(span),
         span_end_line(span),
     );
@@ -786,6 +825,8 @@ fn walk_trait_alias(
     position: i32,
 ) {
     let name = item.ident.to_string();
+    let mut meta = json!({"visibility": metadata::visibility_str(&item.vis)});
+    insert_source(&mut meta, item);
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
@@ -793,7 +834,7 @@ fn walk_trait_alias(
         Some(name),
         Some(parent_id),
         position,
-        json!({"visibility": metadata::visibility_str(&item.vis)}),
+        meta,
         span_start_line(item.ident.span()),
         span_end_line(item.ident.span()),
     );
