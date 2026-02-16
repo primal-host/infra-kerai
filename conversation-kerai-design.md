@@ -11,7 +11,7 @@ The project was originally named "astute" — from a Claude.ai conversation (sav
 - https://gist.github.com/gritzko/6e81b5391eacb585ae207f5e634db07e
 - https://news.ycombinator.com/item?id=47022238
 
-It was later renamed to **Kerai** (ker.ai) — from 家来 (kerai), Japanese for retainer or servant. The name reflects the project's evolution toward AI agents that loyally serve developers. Billy owns the domain `ker.ai`; the repo lives at `primal-host/kerai`.
+It was later renamed to **Kerai** (ker.ai) — from 家来 (kerai, Japanese for "staff"). The name reflects the project's evolution toward AI agents that work alongside developers. Billy owns the domain `ker.ai`; the repo lives at `primal-host/kerai`.
 
 > **Note on language examples:** This design conversation was originally developed using Go as the example language. The project has since adopted a **Rust-first** approach (see [Plan 00](plans/00-overview.md) and [The Extension Model](#the-extension-model-postgres-is-kerai) below). Go-style paths (`pkg.auth.*`), Go kinds (`FuncDecl`, `IfStmt`), and Go tooling references (`go/parser`, `gofmt`) throughout this document reflect the original design thinking. The Rust equivalents (`crate.auth.*`, `ItemFn`, `ExprIf`, `syn`, `rustfmt`) are used in the implementation plans. The architectural concepts are language-agnostic — only the concrete examples differ.
 
