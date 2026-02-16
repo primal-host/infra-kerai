@@ -147,7 +147,7 @@ CREATE TABLE wallets (
 );
 ```
 
-Every instance gets a wallet automatically (linked via `instance_id`). But wallets can also exist independently — a human holding credits, an AI agent with its own balance, or an external entity on a bridge. The wallet's identity is its Ed25519 public key, the same cryptographic primitive used throughout kerai. This separation allows the currency to flow beyond instance-to-instance transactions (Plan 11).
+Every instance gets a wallet automatically (linked via `instance_id`). But wallets can also exist independently — a human holding kōi, an AI agent with its own balance, or an external entity on a bridge. The wallet's identity is its Ed25519 public key, the same cryptographic primitive used throughout kerai. This separation allows the currency to flow beyond instance-to-instance transactions (Plan 11).
 
 **`ledger`** — economic transactions between wallets
 
@@ -196,7 +196,7 @@ CREATE TABLE attestations (
     claim_type          text NOT NULL,            -- "perspective", "solution", "analysis", "optimization"
     perspective_count   integer,                  -- how many perspectives (if applicable)
     avg_weight          float,                    -- average significance
-    compute_cost        bigint NOT NULL,          -- actual credits spent producing this knowledge
+    compute_cost        bigint NOT NULL,          -- actual kōi spent producing this knowledge
     reproduction_est    bigint NOT NULL,          -- estimated cost for others to independently reproduce
     uniqueness_score    float DEFAULT 0.5,        -- 0.0 = trivially reproducible, 1.0 = believed unique
     proof_type          text NOT NULL DEFAULT 'attestation-only', -- "zk-snark", "zk-stark", "attestation-only"
@@ -365,7 +365,7 @@ These functions compose with standard SQL — you can join their results, filter
 - **ltree path format:** How to derive the path string. Proposed: `{module}.{package}.{file}.{kind}_{name}` e.g. `myproject.auth.handler.funcDecl_validateToken`. Exact format can evolve.
 - **Schema versioning:** Use a simple `schema_version` table with an integer version, plus numbered migration scripts. No ORM.
 - **Instance naming:** How to generate the default instance name. Proposed: derive from hostname + project name, e.g. `billys-macbook.myproject`. User can override.
-- **Currency denomination:** What's the base unit called? Proposed: "kerai credits" or just "credits" for now. The unit is abstract — it represents compute-equivalent value. Naming can evolve.
+- **Currency denomination:** The base unit is called **kōi** (好意, Japanese for "favor"). Like kerai (家来, "retainer"), the name reflects the system's ethos — agents performing favors for each other, tracked as fungible value. The unit is abstract — it represents compute-equivalent value.
 - **Mint rate:** How much value is created per unit of work? Proposed: defer specifics. For Plan 01, the ledger and pricing tables exist but the mint policy is undefined. The first real mint policy arrives with Plan 08 (AI perspectives) when there's actual compute to account for.
 - **Signature canonicalization:** What exact bytes are signed for an operation? Proposed: JSON canonical form of (node_id, operation, payload fields, author, timestamp), sorted keys, no whitespace. This must be defined precisely and never change, since signatures are verified against it.
 - **Reproduction estimate methodology:** How does an instance estimate reproduction cost? Proposed: initially, a simple multiplier on actual compute cost (e.g., 10-20x for novel discoveries, 1-2x for routine analysis). Smarter estimation comes when the market provides feedback — if your knowledge sells consistently, your estimates are roughly right; if nobody buys, they're too high.
@@ -408,7 +408,7 @@ The attestation and challenge tables lay the groundwork for a self-sustaining kn
 
 Each step follows from the previous without a conceptual break. The schema supports the full chain from day one.
 
-The key economic insight: knowledge is worth roughly what it would cost to independently reproduce. An instance that spent 85,000 credits discovering a complex optimization can price it just below reproduction cost. The ZK proof layer (initially `attestation-only`, later real ZK proofs) solves the inspection paradox — buyers can verify the claim has value without receiving the knowledge. AI agents on both sides of the transaction handle pricing, negotiation, and settlement autonomously, with the currency acting as a coordination signal that prioritizes where compute should be invested.
+The key economic insight: knowledge is worth roughly what it would cost to independently reproduce. An instance that spent 85,000 kōi discovering a complex optimization can price it just below reproduction cost. The ZK proof layer (initially `attestation-only`, later real ZK proofs) solves the inspection paradox — buyers can verify the claim has value without receiving the knowledge. AI agents on both sides of the transaction handle pricing, negotiation, and settlement autonomously, with the currency acting as a coordination signal that prioritizes where compute should be invested.
 
 ## Design Note: All Knowledge Trends Toward Open
 
