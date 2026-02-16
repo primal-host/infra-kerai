@@ -31,6 +31,51 @@ fn get_self_identity() -> (String, String) {
     }
 }
 
+/// Resolve instance_id for a remote author by fingerprint + public key hex.
+/// If the peer exists, update last_seen and return the id.
+/// If not found, auto-register as a new peer and return the new id.
+fn resolve_author_instance(author_fingerprint: &str, public_key_hex: &str) -> String {
+    let escaped_fp = sql_escape(author_fingerprint);
+
+    // Try to find existing instance by fingerprint
+    let existing = Spi::get_one::<String>(&format!(
+        "SELECT id::text FROM kerai.instances WHERE key_fingerprint = '{}'",
+        escaped_fp,
+    ))
+    .unwrap();
+
+    if let Some(id) = existing {
+        // Update last_seen
+        Spi::run(&format!(
+            "UPDATE kerai.instances SET last_seen = now() WHERE id = '{}'::uuid",
+            sql_escape(&id),
+        ))
+        .unwrap();
+        return id;
+    }
+
+    // Auto-register new peer
+    let prefix = if author_fingerprint.len() >= 8 {
+        &author_fingerprint[..8]
+    } else {
+        author_fingerprint
+    };
+    let peer_name = format!("peer-{}", prefix);
+
+    let new_id = Spi::get_one::<String>(&format!(
+        "INSERT INTO kerai.instances (name, public_key, key_fingerprint, is_self, last_seen)
+         VALUES ('{}', '\\x{}'::bytea, '{}', false, now())
+         RETURNING id::text",
+        sql_escape(&peer_name),
+        sql_escape(public_key_hex),
+        escaped_fp,
+    ))
+    .unwrap()
+    .unwrap();
+
+    new_id
+}
+
 /// Insert an operation record into the operations table.
 fn insert_operation(
     instance_id: &str,
@@ -173,8 +218,8 @@ fn apply_remote_op(op_json: pgrx::JsonB) -> pgrx::JsonB {
         }));
     }
 
-    // Resolve instance_id for the author (use self for now; Plan 06 will add peer lookup)
-    let (instance_id, _) = get_self_identity();
+    // Resolve instance_id for the remote author (auto-registers unknown peers)
+    let instance_id = resolve_author_instance(author, pk_hex);
 
     // Validate and apply
     operations::validate_op(op_type, node_id, payload);
@@ -218,24 +263,26 @@ fn lamport_clock() -> i64 {
 }
 
 /// Get operations for a given author since a sequence number (exclusive).
-/// Returns a JSON array of operation objects.
+/// Returns a JSON array of operation objects, including the author's public_key.
 #[pg_extern]
 fn ops_since(author: &str, since_seq: i64) -> pgrx::JsonB {
     let escaped = sql_escape(author);
     let json = Spi::get_one::<pgrx::JsonB>(&format!(
         "SELECT COALESCE(
             jsonb_agg(jsonb_build_object(
-                'op_type', op_type,
-                'node_id', node_id,
-                'author', author,
-                'author_seq', author_seq,
-                'lamport_ts', lamport_ts,
-                'payload', payload,
-                'signature', encode(signature, 'hex')
-            ) ORDER BY author_seq),
+                'op_type', o.op_type,
+                'node_id', o.node_id,
+                'author', o.author,
+                'author_seq', o.author_seq,
+                'lamport_ts', o.lamport_ts,
+                'payload', o.payload,
+                'signature', encode(o.signature, 'hex'),
+                'public_key', encode(i.public_key, 'hex')
+            ) ORDER BY o.author_seq),
             '[]'::jsonb
-        ) FROM kerai.operations
-        WHERE author = '{}' AND author_seq > {}",
+        ) FROM kerai.operations o
+        JOIN kerai.instances i ON i.key_fingerprint = o.author
+        WHERE o.author = '{}' AND o.author_seq > {}",
         escaped,
         since_seq,
     ))
