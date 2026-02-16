@@ -4,17 +4,7 @@ use pgrx::prelude::*;
 // Plan 03: Reconstruction — moved to src/reconstruct/mod.rs
 // Plan 04: CRDT Operations — moved to src/crdt/mod.rs
 // Plan 06: Peer Sync — moved to src/peers.rs + cli/src/commands/sync.rs
-
-// Plan 07: Query / Navigation
-#[pg_extern]
-fn find(pattern: &str) -> String {
-    format!("STUB: find('{}') — implemented in Plan 07", pattern)
-}
-
-#[pg_extern]
-fn refs(symbol: &str) -> String {
-    format!("STUB: refs('{}') — implemented in Plan 07", symbol)
-}
+// Plan 07: Query / Navigation — moved to src/query.rs
 
 // Plan 10/11: Marketplace
 #[pg_extern]

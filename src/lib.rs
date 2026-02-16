@@ -6,6 +6,7 @@ mod functions;
 mod identity;
 mod parser;
 mod peers;
+mod query;
 mod reconstruct;
 mod schema;
 mod workers;
@@ -394,14 +395,6 @@ impl Foo {
         .unwrap();
 
         assert_eq!(count1, count2, "Idempotent parse should not duplicate nodes");
-    }
-
-    #[pg_test]
-    fn test_stub_find() {
-        let result = Spi::get_one::<String>("SELECT kerai.find('test')")
-            .unwrap()
-            .unwrap();
-        assert!(result.starts_with("STUB:"));
     }
 
     // --- Plan 03: Reconstruction tests ---
