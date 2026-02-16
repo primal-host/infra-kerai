@@ -124,7 +124,7 @@ pub fn walk_markdown(
                             node.content = Some(text_accum.clone());
 
                             // For links/images, add URL to metadata
-                            if (entry.kind == kinds::LINK || entry.kind == kinds::IMAGE) {
+                            if entry.kind == kinds::LINK || entry.kind == kinds::IMAGE {
                                 if let Some((url, title)) = current_link.take() {
                                     let mut meta = node.metadata.clone();
                                     if let Value::Object(ref mut map) = meta {

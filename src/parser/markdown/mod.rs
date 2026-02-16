@@ -47,6 +47,7 @@ fn delete_markdown_nodes(instance_id: &str, filename: &str) {
     .ok();
 }
 
+#[allow(dead_code)]
 pub mod kinds;
 mod walker;
 
