@@ -12,6 +12,8 @@ mod perspectives;
 mod query;
 mod reconstruct;
 mod schema;
+mod swarm;
+mod tasks;
 mod workers;
 
 #[pgrx::pg_guard]
@@ -1547,6 +1549,277 @@ impl Config {
         assert!(!disagreements.is_empty(), "Should have at least one disagreement on shared node");
         let diff = disagreements[0]["diff"].as_f64().unwrap();
         assert!((diff - 0.6).abs() < 0.001, "Diff should be ~0.6, got {}", diff);
+    }
+
+    // --- Plan 09: Swarm task tests ---
+
+    #[pg_test]
+    fn test_create_task() {
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Fix bug #42', 'cargo test', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["description"].as_str().unwrap(), "Fix bug #42");
+        assert_eq!(obj["success_command"].as_str().unwrap(), "cargo test");
+        assert_eq!(obj["status"].as_str().unwrap(), "pending");
+        assert!(obj.contains_key("id"));
+    }
+
+    #[pg_test]
+    fn test_create_task_with_scope() {
+        // Create a scope node first
+        let node = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"module\", \"content\": \"scope_mod\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let node_id = node.0["node_id"].as_str().unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.create_task('Scoped task', 'make test', '{}'::uuid, 100, 300)",
+            node_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["status"].as_str().unwrap(), "pending");
+        assert!(obj["scope_node_id"].as_str().is_some());
+        assert_eq!(obj["budget_ops"].as_i64().unwrap(), 100);
+        assert_eq!(obj["budget_seconds"].as_i64().unwrap(), 300);
+    }
+
+    #[pg_test]
+    fn test_list_tasks() {
+        Spi::run("SELECT kerai.create_task('Task A', 'cmd_a', NULL, NULL, NULL)")
+            .unwrap();
+        Spi::run("SELECT kerai.create_task('Task B', 'cmd_b', NULL, NULL, NULL)")
+            .unwrap();
+
+        // List all
+        let all = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_tasks(NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = all.0.as_array().unwrap();
+        assert!(arr.len() >= 2, "Should have at least 2 tasks");
+
+        // List with filter
+        let pending = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_tasks('pending')",
+        )
+        .unwrap()
+        .unwrap();
+        let parr = pending.0.as_array().unwrap();
+        for t in parr {
+            assert_eq!(t["status"].as_str().unwrap(), "pending");
+        }
+    }
+
+    #[pg_test]
+    fn test_update_task_status() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Update me', 'test cmd', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.update_task_status('{}'::uuid, 'running')",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["status"].as_str().unwrap(), "running");
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Invalid task status")]
+    fn test_update_task_invalid_status() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Bad status', 'cmd', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        Spi::run(&format!(
+            "SELECT kerai.update_task_status('{}'::uuid, 'bogus')",
+            task_id,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    fn test_launch_swarm() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Swarm task', 'cargo test', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.launch_swarm('{}'::uuid, 3, 'llm', 'claude-opus-4-6')",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["status"].as_str().unwrap(), "running");
+        assert_eq!(obj["agent_count"].as_i64().unwrap(), 3);
+        assert!(obj["swarm_name"].as_str().unwrap().starts_with("swarm-"));
+
+        // Verify swarm agent was registered
+        let swarm_name = obj["swarm_name"].as_str().unwrap();
+        let agent_exists = Spi::get_one::<bool>(&format!(
+            "SELECT EXISTS(SELECT 1 FROM kerai.agents WHERE name = '{}')",
+            sql_escape(swarm_name),
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(agent_exists, "Swarm agent should be registered");
+    }
+
+    #[pg_test]
+    fn test_stop_swarm() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Stop me', 'cmd', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        Spi::run(&format!(
+            "SELECT kerai.launch_swarm('{}'::uuid, 2, 'llm', NULL)",
+            task_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.stop_swarm('{}'::uuid)",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["status"].as_str().unwrap(), "stopped");
+    }
+
+    #[pg_test]
+    fn test_record_test_result() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Result task', 'cmd', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        Spi::run("SELECT kerai.register_agent('result-agent', 'llm', NULL, NULL)")
+            .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.record_test_result('{}'::uuid, 'result-agent', true, 'all tests pass', 150, 5)",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert!(obj["passed"].as_bool().unwrap());
+        assert_eq!(obj["duration_ms"].as_i64().unwrap(), 150);
+        assert_eq!(obj["ops_count"].as_i64().unwrap(), 5);
+
+        // Verify stored
+        let count = Spi::get_one::<i64>(&format!(
+            "SELECT count(*)::bigint FROM kerai.test_results WHERE task_id = '{}'::uuid",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[pg_test]
+    fn test_swarm_leaderboard() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Leaderboard task', 'cmd', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        Spi::run("SELECT kerai.register_agent('lb-agent-1', 'llm', NULL, NULL)")
+            .unwrap();
+        Spi::run("SELECT kerai.register_agent('lb-agent-2', 'llm', NULL, NULL)")
+            .unwrap();
+
+        // Agent 1: 2 pass, 1 fail
+        Spi::run(&format!("SELECT kerai.record_test_result('{}'::uuid, 'lb-agent-1', true, NULL, 100, NULL)", task_id)).unwrap();
+        Spi::run(&format!("SELECT kerai.record_test_result('{}'::uuid, 'lb-agent-1', true, NULL, 120, NULL)", task_id)).unwrap();
+        Spi::run(&format!("SELECT kerai.record_test_result('{}'::uuid, 'lb-agent-1', false, NULL, 200, NULL)", task_id)).unwrap();
+
+        // Agent 2: 1 pass
+        Spi::run(&format!("SELECT kerai.record_test_result('{}'::uuid, 'lb-agent-2', true, NULL, 80, NULL)", task_id)).unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.swarm_leaderboard('{}'::uuid)",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let arr = result.0.as_array().unwrap();
+        assert_eq!(arr.len(), 2, "Should have 2 agents on leaderboard");
+
+        // Agent 2 should be first (100% pass rate)
+        assert_eq!(arr[0]["agent_name"].as_str().unwrap(), "lb-agent-2");
+        assert_eq!(arr[0]["pass_count"].as_i64().unwrap(), 1);
+    }
+
+    #[pg_test]
+    fn test_swarm_progress() {
+        let task = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_task('Progress task', 'cmd', NULL, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let task_id = task.0["id"].as_str().unwrap();
+
+        Spi::run("SELECT kerai.register_agent('prog-agent', 'llm', NULL, NULL)")
+            .unwrap();
+
+        Spi::run(&format!("SELECT kerai.record_test_result('{}'::uuid, 'prog-agent', true, NULL, 50, NULL)", task_id)).unwrap();
+        Spi::run(&format!("SELECT kerai.record_test_result('{}'::uuid, 'prog-agent', false, NULL, 60, NULL)", task_id)).unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.swarm_progress('{}'::uuid)",
+            task_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let arr = result.0.as_array().unwrap();
+        assert!(!arr.is_empty(), "Should have at least one time bucket");
+        let first = &arr[0];
+        assert_eq!(first["total"].as_i64().unwrap(), 2);
+        assert_eq!(first["passed"].as_i64().unwrap(), 1);
+        assert_eq!(first["failed"].as_i64().unwrap(), 1);
+    }
+
+    #[pg_test]
+    fn test_swarm_status_overview() {
+        Spi::run("SELECT kerai.create_task('Status task 1', 'cmd1', NULL, NULL, NULL)")
+            .unwrap();
+        Spi::run("SELECT kerai.create_task('Status task 2', 'cmd2', NULL, NULL, NULL)")
+            .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.swarm_status(NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = result.0.as_array().unwrap();
+        assert!(arr.len() >= 2, "Should show at least 2 tasks in overview");
     }
 
     /// sql_escape helper for tests
