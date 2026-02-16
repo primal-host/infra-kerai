@@ -1,7 +1,8 @@
 FROM primal-host-infra-eridu:latest AS builder
 WORKDIR /build
 
-# Copy web crate
+# Copy web crate and workspace Cargo.lock
+COPY Cargo.lock ./web/
 COPY web/ ./web/
 
 # Build Rust binary (web crate only, no pgrx dependency)
