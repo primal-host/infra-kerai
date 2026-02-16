@@ -6,6 +6,7 @@ pub mod find;
 pub mod info;
 pub mod init;
 pub mod log;
+pub mod market;
 pub mod peer;
 pub mod perspective;
 pub mod ping;
@@ -123,6 +124,39 @@ pub enum Command {
     SwarmProgress {
         task_id: String,
     },
+    MarketCreate {
+        attestation_id: String,
+        starting_price: i64,
+        floor_price: i64,
+        price_decrement: i64,
+        decrement_interval: i64,
+        min_bidders: i32,
+        open_delay_hours: i32,
+    },
+    MarketBid {
+        auction_id: String,
+        max_price: i64,
+    },
+    MarketSettle {
+        auction_id: String,
+    },
+    MarketOpenSource {
+        auction_id: String,
+    },
+    MarketBrowse {
+        scope: Option<String>,
+        max_price: Option<i64>,
+        status: Option<String>,
+    },
+    MarketStatus {
+        auction_id: String,
+    },
+    MarketBalance,
+    MarketCommons {
+        scope: Option<String>,
+        since: Option<String>,
+    },
+    MarketStats,
 }
 
 pub fn run(
@@ -242,5 +276,53 @@ pub fn run(
         Command::SwarmProgress { task_id } => {
             swarm::progress(&mut client, &task_id, format)
         }
+        Command::MarketCreate {
+            attestation_id,
+            starting_price,
+            floor_price,
+            price_decrement,
+            decrement_interval,
+            min_bidders,
+            open_delay_hours,
+        } => market::create(
+            &mut client,
+            &attestation_id,
+            starting_price,
+            floor_price,
+            price_decrement,
+            decrement_interval,
+            min_bidders,
+            open_delay_hours,
+            format,
+        ),
+        Command::MarketBid {
+            auction_id,
+            max_price,
+        } => market::bid(&mut client, &auction_id, max_price, format),
+        Command::MarketSettle { auction_id } => {
+            market::settle(&mut client, &auction_id, format)
+        }
+        Command::MarketOpenSource { auction_id } => {
+            market::open_source(&mut client, &auction_id)
+        }
+        Command::MarketBrowse {
+            scope,
+            max_price,
+            status,
+        } => market::browse(
+            &mut client,
+            scope.as_deref(),
+            max_price,
+            status.as_deref(),
+            format,
+        ),
+        Command::MarketStatus { auction_id } => {
+            market::status(&mut client, &auction_id, format)
+        }
+        Command::MarketBalance => market::balance(&mut client, format),
+        Command::MarketCommons { scope, since } => {
+            market::commons(&mut client, scope.as_deref(), since.as_deref(), format)
+        }
+        Command::MarketStats => market::stats(&mut client, format),
     }
 }

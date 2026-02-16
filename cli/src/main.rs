@@ -157,6 +157,12 @@ enum CliCommand {
         #[command(subcommand)]
         action: SwarmAction,
     },
+
+    /// Knowledge marketplace — auctions, bids, commons
+    Market {
+        #[command(subcommand)]
+        action: MarketAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -276,6 +282,99 @@ enum SwarmAction {
         /// Task ID
         task_id: String,
     },
+}
+
+#[derive(Subcommand)]
+enum MarketAction {
+    /// Create a Dutch auction for an attestation
+    Create {
+        /// Attestation ID
+        attestation_id: String,
+
+        /// Starting price in credits
+        #[arg(long)]
+        starting_price: i64,
+
+        /// Floor price (0 = always goes open)
+        #[arg(long, default_value = "0")]
+        floor_price: i64,
+
+        /// Price decrease per interval
+        #[arg(long)]
+        price_decrement: i64,
+
+        /// Interval between price drops (seconds)
+        #[arg(long)]
+        decrement_interval: i64,
+
+        /// Minimum bidders to trigger settlement
+        #[arg(long, default_value = "1")]
+        min_bidders: i32,
+
+        /// Hours after settlement before open-sourcing
+        #[arg(long, default_value = "24")]
+        open_delay_hours: i32,
+    },
+
+    /// Place a bid on an auction
+    Bid {
+        /// Auction ID
+        auction_id: String,
+
+        /// Maximum price willing to pay
+        #[arg(long)]
+        max_price: i64,
+    },
+
+    /// Settle an auction (pay winning bidders)
+    Settle {
+        /// Auction ID
+        auction_id: String,
+    },
+
+    /// Open-source a settled auction
+    OpenSource {
+        /// Auction ID
+        auction_id: String,
+    },
+
+    /// Browse auctions
+    Browse {
+        /// Filter by scope (ltree path)
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Maximum price filter
+        #[arg(long)]
+        max_price: Option<i64>,
+
+        /// Filter by status (active, settled, open_sourced)
+        #[arg(long)]
+        status: Option<String>,
+    },
+
+    /// Show auction details and bids
+    Status {
+        /// Auction ID
+        auction_id: String,
+    },
+
+    /// Show marketplace earnings and spending
+    Balance,
+
+    /// Browse open-sourced knowledge
+    Commons {
+        /// Filter by scope (ltree path)
+        #[arg(long)]
+        scope: Option<String>,
+
+        /// Filter by date (ISO 8601)
+        #[arg(long)]
+        since: Option<String>,
+    },
+
+    /// Show marketplace statistics
+    Stats,
 }
 
 #[derive(Subcommand)]
@@ -417,6 +516,55 @@ fn main() {
                 commands::Command::SwarmLeaderboard { task_id }
             }
             SwarmAction::Progress { task_id } => commands::Command::SwarmProgress { task_id },
+        },
+        CliCommand::Market { action } => match action {
+            MarketAction::Create {
+                attestation_id,
+                starting_price,
+                floor_price,
+                price_decrement,
+                decrement_interval,
+                min_bidders,
+                open_delay_hours,
+            } => commands::Command::MarketCreate {
+                attestation_id,
+                starting_price,
+                floor_price,
+                price_decrement,
+                decrement_interval,
+                min_bidders,
+                open_delay_hours,
+            },
+            MarketAction::Bid {
+                auction_id,
+                max_price,
+            } => commands::Command::MarketBid {
+                auction_id,
+                max_price,
+            },
+            MarketAction::Settle { auction_id } => {
+                commands::Command::MarketSettle { auction_id }
+            }
+            MarketAction::OpenSource { auction_id } => {
+                commands::Command::MarketOpenSource { auction_id }
+            }
+            MarketAction::Browse {
+                scope,
+                max_price,
+                status,
+            } => commands::Command::MarketBrowse {
+                scope,
+                max_price,
+                status,
+            },
+            MarketAction::Status { auction_id } => {
+                commands::Command::MarketStatus { auction_id }
+            }
+            MarketAction::Balance => commands::Command::MarketBalance,
+            MarketAction::Commons { scope, since } => {
+                commands::Command::MarketCommons { scope, since }
+            }
+            MarketAction::Stats => commands::Command::MarketStats,
         },
     };
 
