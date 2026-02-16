@@ -251,6 +251,110 @@ CREATE INDEX idx_challenges_status ON kerai.challenges (status);
     requires = ["table_attestations"]
 );
 
+// Table: agents — AI agent registry
+extension_sql!(
+    r#"
+CREATE TABLE kerai.agents (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id   UUID REFERENCES kerai.wallets(id),
+    name        TEXT NOT NULL UNIQUE,
+    kind        TEXT NOT NULL,
+    model       TEXT,
+    config      JSONB DEFAULT '{}'::jsonb,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_agents_kind ON kerai.agents(kind);
+"#,
+    name = "table_agents",
+    requires = ["table_wallets"]
+);
+
+// Table: perspectives — weighted agent views of nodes
+extension_sql!(
+    r#"
+CREATE TABLE kerai.perspectives (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id    UUID NOT NULL REFERENCES kerai.agents(id),
+    node_id     UUID NOT NULL REFERENCES kerai.nodes(id),
+    weight      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    context_id  UUID REFERENCES kerai.nodes(id),
+    reasoning   TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(agent_id, node_id, context_id)
+);
+
+CREATE INDEX idx_perspectives_agent ON kerai.perspectives(agent_id);
+CREATE INDEX idx_perspectives_node ON kerai.perspectives(node_id);
+CREATE INDEX idx_perspectives_context ON kerai.perspectives(context_id) WHERE context_id IS NOT NULL;
+CREATE INDEX idx_perspectives_weight ON kerai.perspectives(weight);
+"#,
+    name = "table_perspectives",
+    requires = ["table_agents", "table_nodes"]
+);
+
+// Table: associations — weighted relationships between nodes from an agent's view
+extension_sql!(
+    r#"
+CREATE TABLE kerai.associations (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id    UUID NOT NULL REFERENCES kerai.agents(id),
+    source_id   UUID NOT NULL REFERENCES kerai.nodes(id),
+    target_id   UUID NOT NULL REFERENCES kerai.nodes(id),
+    weight      DOUBLE PRECISION NOT NULL DEFAULT 0,
+    relation    TEXT NOT NULL,
+    reasoning   TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(agent_id, source_id, target_id, relation)
+);
+
+CREATE INDEX idx_associations_agent ON kerai.associations(agent_id);
+CREATE INDEX idx_associations_source ON kerai.associations(source_id);
+CREATE INDEX idx_associations_target ON kerai.associations(target_id);
+"#,
+    name = "table_associations",
+    requires = ["table_agents", "table_nodes"]
+);
+
+// View: consensus_perspectives — aggregated weight stats per node across agents
+extension_sql!(
+    r#"
+CREATE VIEW kerai.consensus_perspectives AS
+SELECT
+    node_id,
+    context_id,
+    count(DISTINCT agent_id) AS agent_count,
+    avg(weight) AS avg_weight,
+    min(weight) AS min_weight,
+    max(weight) AS max_weight,
+    stddev(weight) AS stddev_weight
+FROM kerai.perspectives
+GROUP BY node_id, context_id;
+"#,
+    name = "view_consensus_perspectives",
+    requires = ["table_perspectives"]
+);
+
+// View: unique_associations — associations held by only one agent
+extension_sql!(
+    r#"
+CREATE VIEW kerai.unique_associations AS
+SELECT a.*
+FROM kerai.associations a
+WHERE NOT EXISTS (
+    SELECT 1 FROM kerai.associations a2
+    WHERE a2.source_id = a.source_id
+      AND a2.target_id = a.target_id
+      AND a2.relation = a.relation
+      AND a2.agent_id != a.agent_id
+);
+"#,
+    name = "view_unique_associations",
+    requires = ["table_associations"]
+);
+
 // Table: operations — CRDT operation log (stub for Plan 04)
 extension_sql!(
     r#"
