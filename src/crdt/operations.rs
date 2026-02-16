@@ -1,5 +1,6 @@
 /// Validation and materialized state application for CRDT operations.
 /// Each op_type maps to an INSERT/UPDATE/DELETE on kerai.nodes or kerai.edges.
+use base64::Engine as _;
 use pgrx::prelude::*;
 use serde_json::Value;
 
@@ -30,6 +31,10 @@ const VALID_OP_TYPES: &[&str] = &[
     "register_wallet",
     "signed_transfer",
     "mint_reward",
+    "create_model",
+    "update_model_weights",
+    "delete_model",
+    "train_step",
 ];
 
 /// Validate that op_type is known and node_id requirements are met.
@@ -54,6 +59,10 @@ pub fn validate_op(op_type: &str, node_id: Option<&str>, _payload: &Value) {
         "register_wallet",
         "signed_transfer",
         "mint_reward",
+        "create_model",
+        "update_model_weights",
+        "delete_model",
+        "train_step",
     ];
     if !no_node_id_ops.contains(&op_type) && node_id.is_none() {
         error!("op_type '{}' requires a node_id", op_type);
@@ -113,6 +122,10 @@ pub fn apply(
         "register_wallet" => apply_register_wallet(payload),
         "signed_transfer" => apply_signed_transfer(payload),
         "mint_reward" => apply_mint_reward(payload),
+        "create_model" => apply_create_model(payload),
+        "update_model_weights" => apply_update_model_weights(payload),
+        "delete_model" => apply_delete_model(payload),
+        "train_step" => apply_train_step(payload),
         _ => error!("Unknown op_type: '{}'", op_type),
     }
 }
@@ -795,4 +808,202 @@ fn apply_mint_reward(payload: &Value) -> String {
     .unwrap();
 
     ledger_id
+}
+
+/// Create model: record that a model was initialized for an agent. Returns agent_id.
+fn apply_create_model(payload: &Value) -> String {
+    let agent_id = payload["agent_id"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_model requires 'agent_id' in payload"));
+    let config = payload
+        .get("config")
+        .unwrap_or_else(|| error!("create_model requires 'config' in payload"));
+    let config_str = sql_escape(&config.to_string());
+
+    Spi::run(&format!(
+        "UPDATE kerai.agents SET config = '{}'::jsonb WHERE id = '{}'::uuid",
+        config_str,
+        sql_escape(agent_id),
+    ))
+    .unwrap();
+
+    agent_id.to_string()
+}
+
+/// Update model weights: apply a delta (base64-encoded f32 array) to a tensor.
+/// Federated averaging: element-wise addition of deltas.
+fn apply_update_model_weights(payload: &Value) -> String {
+    let agent_id = payload["agent_id"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_model_weights requires 'agent_id' in payload"));
+    let tensor_name = payload["tensor_name"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_model_weights requires 'tensor_name' in payload"));
+    let delta_b64 = payload["delta"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_model_weights requires 'delta' (base64) in payload"));
+
+    // Decode delta
+    let delta_bytes = base64::Engine::decode(
+        &base64::engine::general_purpose::STANDARD,
+        delta_b64,
+    )
+    .unwrap_or_else(|e| error!("Invalid base64 delta: {e}"));
+
+    if delta_bytes.len() % 4 != 0 {
+        error!("Delta byte length must be a multiple of 4");
+    }
+
+    let delta_floats: Vec<f32> = delta_bytes
+        .chunks_exact(4)
+        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+        .collect();
+
+    // Load current tensor
+    let load_sql = format!(
+        "SELECT tensor_data, shape FROM kerai.model_weights
+         WHERE agent_id = '{}'::uuid AND tensor_name = '{}'",
+        sql_escape(agent_id),
+        sql_escape(tensor_name),
+    );
+
+    let mut current_bytes: Option<Vec<u8>> = None;
+    Spi::connect(|client| {
+        if let Ok(tup_table) = client.select(&load_sql, None, None) {
+            for row in tup_table {
+                current_bytes = row.get_by_name("tensor_data").ok().flatten();
+            }
+        }
+    });
+
+    match current_bytes {
+        Some(bytes) => {
+            if bytes.len() != delta_bytes.len() {
+                error!(
+                    "Delta size {} != tensor size {} for '{}'",
+                    delta_bytes.len(),
+                    bytes.len(),
+                    tensor_name
+                );
+            }
+            // Element-wise add
+            let mut current_floats: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            for (c, d) in current_floats.iter_mut().zip(delta_floats.iter()) {
+                *c += d;
+            }
+            // Serialize back
+            let mut new_bytes = Vec::with_capacity(current_floats.len() * 4);
+            for &v in &current_floats {
+                new_bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            let hex: String = new_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+            let update_sql = format!(
+                "UPDATE kerai.model_weights
+                 SET tensor_data = '\\x{}'::bytea, version = version + 1, updated_at = now()
+                 WHERE agent_id = '{}'::uuid AND tensor_name = '{}'",
+                hex,
+                sql_escape(agent_id),
+                sql_escape(tensor_name),
+            );
+            Spi::run(&update_sql).unwrap();
+        }
+        None => {
+            // Tensor doesn't exist yet — store delta as initial weights
+            let mut new_bytes = Vec::with_capacity(delta_floats.len() * 4);
+            for &v in &delta_floats {
+                new_bytes.extend_from_slice(&v.to_le_bytes());
+            }
+            let hex: String = new_bytes.iter().map(|b| format!("{:02x}", b)).collect();
+            let shape_arr = payload.get("shape").and_then(|v| v.as_array());
+            let shape_sql = match shape_arr {
+                Some(arr) => {
+                    let dims: Vec<String> = arr
+                        .iter()
+                        .filter_map(|v| v.as_i64().map(|i| i.to_string()))
+                        .collect();
+                    format!("ARRAY[{}]::integer[]", dims.join(","))
+                }
+                None => format!("ARRAY[{}]::integer[]", delta_floats.len()),
+            };
+            let insert_sql = format!(
+                "INSERT INTO kerai.model_weights (agent_id, tensor_name, tensor_data, shape)
+                 VALUES ('{}'::uuid, '{}', '\\x{}'::bytea, {})",
+                sql_escape(agent_id),
+                sql_escape(tensor_name),
+                hex,
+                shape_sql,
+            );
+            Spi::run(&insert_sql).unwrap();
+        }
+    }
+
+    agent_id.to_string()
+}
+
+/// Delete model: remove all weights and vocab for an agent.
+fn apply_delete_model(payload: &Value) -> String {
+    let agent_id = payload["agent_id"]
+        .as_str()
+        .unwrap_or_else(|| error!("delete_model requires 'agent_id' in payload"));
+
+    Spi::run(&format!(
+        "DELETE FROM kerai.model_weights WHERE agent_id = '{}'::uuid",
+        sql_escape(agent_id),
+    ))
+    .unwrap();
+
+    Spi::run(&format!(
+        "DELETE FROM kerai.model_vocab WHERE model_id = '{}'::uuid",
+        sql_escape(agent_id),
+    ))
+    .unwrap();
+
+    Spi::run(&format!(
+        "UPDATE kerai.agents SET config = '{{}}'::jsonb WHERE id = '{}'::uuid",
+        sql_escape(agent_id),
+    ))
+    .unwrap();
+
+    agent_id.to_string()
+}
+
+/// Train step: audit log entry for a training step. Returns training_run id.
+fn apply_train_step(payload: &Value) -> String {
+    let agent_id = payload["agent_id"]
+        .as_str()
+        .unwrap_or_else(|| error!("train_step requires 'agent_id' in payload"));
+    let config = payload
+        .get("config")
+        .unwrap_or(&Value::Object(serde_json::Map::new()));
+    let walk_type = payload["walk_type"].as_str().unwrap_or("tree");
+    let n_sequences = payload["n_sequences"].as_i64().unwrap_or(0);
+    let n_steps = payload["n_steps"].as_i64().unwrap_or(0);
+    let final_loss = payload["final_loss"].as_f64().unwrap_or(0.0);
+    let duration_ms = payload["duration_ms"].as_i64().unwrap_or(0);
+
+    let scope_sql = match payload.get("scope").and_then(|v| v.as_str()) {
+        Some(s) => format!("'{}'::ltree", sql_escape(s)),
+        None => "NULL".to_string(),
+    };
+
+    let run_id = Spi::get_one::<String>(&format!(
+        "INSERT INTO kerai.training_runs (agent_id, config, walk_type, scope, n_sequences, n_steps, final_loss, duration_ms)
+         VALUES ('{}'::uuid, '{}'::jsonb, '{}', {}, {}, {}, {}, {})
+         RETURNING id::text",
+        sql_escape(agent_id),
+        sql_escape(&config.to_string()),
+        sql_escape(walk_type),
+        scope_sql,
+        n_sequences,
+        n_steps,
+        final_loss,
+        duration_ms,
+    ))
+    .unwrap()
+    .unwrap();
+
+    run_id
 }
