@@ -291,7 +291,7 @@ enum MarketAction {
         /// Attestation ID
         attestation_id: String,
 
-        /// Starting price in credits
+        /// Starting price in kōi
         #[arg(long)]
         starting_price: i64,
 

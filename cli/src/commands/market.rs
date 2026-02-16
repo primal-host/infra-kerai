@@ -78,7 +78,7 @@ pub fn settle(
 
     let price = value["settled_price"].as_i64().unwrap_or(0);
     let bidders = value["bidder_count"].as_i64().unwrap_or(0);
-    println!("Auction settled at {price} credits with {bidders} bidder(s)");
+    println!("Auction settled at {price} kōi with {bidders} bidder(s)");
     print_json(&value, format);
     Ok(())
 }
