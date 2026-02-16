@@ -2,8 +2,10 @@ pgrx::pg_module_magic!();
 
 mod agents;
 mod bootstrap;
+mod bounties;
 mod consensus;
 mod crdt;
+mod economy;
 mod functions;
 mod identity;
 mod marketplace;
@@ -2378,6 +2380,385 @@ impl Config {
         .unwrap();
         let arr = result.0.as_array().unwrap();
         assert!(!arr.is_empty(), "context_search without agents should still return FTS results");
+    }
+
+    // --- Plan 11: Economy tests ---
+
+    /// Helper: get self wallet ID.
+    fn get_self_wallet_id() -> String {
+        Spi::get_one::<String>(
+            "SELECT w.id::text FROM kerai.wallets w
+             JOIN kerai.instances i ON w.instance_id = i.id
+             WHERE i.is_self = true AND w.wallet_type = 'instance'",
+        )
+        .unwrap()
+        .unwrap()
+    }
+
+    /// Helper: mint kōi to the self wallet and return the wallet ID.
+    fn mint_to_self(amount: i64) -> String {
+        let wallet_id = get_self_wallet_id();
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, {}, 'test mint', NULL, NULL)",
+            wallet_id, amount,
+        ))
+        .unwrap();
+        wallet_id
+    }
+
+    #[pg_test]
+    fn test_create_wallet_human() {
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Alice')",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["wallet_type"].as_str().unwrap(), "human");
+        assert_eq!(obj["label"].as_str().unwrap(), "Alice");
+        assert!(obj.contains_key("id"));
+        assert!(obj.contains_key("key_fingerprint"));
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Invalid wallet type")]
+    fn test_create_wallet_invalid_type() {
+        Spi::run("SELECT kerai.create_wallet('instance', NULL)")
+            .unwrap();
+    }
+
+    #[pg_test]
+    fn test_list_wallets() {
+        // Create a human wallet
+        Spi::run("SELECT kerai.create_wallet('human', 'List Test')")
+            .unwrap();
+
+        // List all
+        let all = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_wallets(NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = all.0.as_array().unwrap();
+        // Should have at least the bootstrap instance wallet + the new one
+        assert!(arr.len() >= 2, "Should have at least 2 wallets, got {}", arr.len());
+
+        // List filtered
+        let humans = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_wallets('human')",
+        )
+        .unwrap()
+        .unwrap();
+        let harr = humans.0.as_array().unwrap();
+        for w in harr {
+            assert_eq!(w["wallet_type"].as_str().unwrap(), "human");
+        }
+    }
+
+    #[pg_test]
+    fn test_mint_koi() {
+        let wallet_id = get_self_wallet_id();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 500, 'test reward', NULL, NULL)",
+            wallet_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["amount"].as_i64().unwrap(), 500);
+        assert_eq!(obj["reason"].as_str().unwrap(), "test reward");
+
+        // Verify balance increased
+        let bal = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.get_wallet_balance('{}'::uuid)",
+            wallet_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(bal.0["balance"].as_i64().unwrap() >= 500);
+    }
+
+    #[pg_test]
+    fn test_transfer_koi() {
+        // Mint to self
+        let self_wallet = mint_to_self(1000);
+
+        // Create a human wallet
+        let human = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Transfer Target')",
+        )
+        .unwrap()
+        .unwrap();
+        let human_id = human.0["id"].as_str().unwrap().to_string();
+
+        // Transfer 300 kōi
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.transfer_koi('{}'::uuid, '{}'::uuid, 300, 'payment')",
+            self_wallet, human_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["amount"].as_i64().unwrap(), 300);
+
+        // Verify recipient balance
+        let bal = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.get_wallet_balance('{}'::uuid)",
+            human_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(bal.0["balance"].as_i64().unwrap(), 300);
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "Insufficient balance")]
+    fn test_transfer_insufficient_balance() {
+        let self_wallet = get_self_wallet_id();
+
+        let target = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Overdraw Target')",
+        )
+        .unwrap()
+        .unwrap();
+        let target_id = target.0["id"].as_str().unwrap().to_string();
+
+        // Try to transfer more than balance (self wallet starts at 0)
+        Spi::run(&format!(
+            "SELECT kerai.transfer_koi('{}'::uuid, '{}'::uuid, 999999, NULL)",
+            self_wallet, target_id,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    fn test_wallet_history() {
+        let self_wallet = mint_to_self(200);
+
+        let target = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('agent', 'History Target')",
+        )
+        .unwrap()
+        .unwrap();
+        let target_id = target.0["id"].as_str().unwrap().to_string();
+
+        Spi::run(&format!(
+            "SELECT kerai.transfer_koi('{}'::uuid, '{}'::uuid, 50, 'history test')",
+            self_wallet, target_id,
+        ))
+        .unwrap();
+
+        let history = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.wallet_history('{}'::uuid, 10)",
+            self_wallet,
+        ))
+        .unwrap()
+        .unwrap();
+        let arr = history.0.as_array().unwrap();
+        assert!(arr.len() >= 2, "Should have at least 2 entries (mint + transfer), got {}", arr.len());
+    }
+
+    #[pg_test]
+    fn test_get_wallet_balance() {
+        let self_wallet = get_self_wallet_id();
+
+        // Mint a known amount
+        Spi::run(&format!(
+            "SELECT kerai.mint_koi('{}'::uuid, 750, 'balance test', NULL, NULL)",
+            self_wallet,
+        ))
+        .unwrap();
+
+        let bal = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.get_wallet_balance('{}'::uuid)",
+            self_wallet,
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(bal.0["balance"].as_i64().unwrap() >= 750);
+        assert!(bal.0["total_received"].as_i64().unwrap() >= 750);
+    }
+
+    #[pg_test]
+    fn test_create_bounty() {
+        // Need funds to create bounty
+        let self_wallet = mint_to_self(5000);
+        let _ = self_wallet;
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_bounty('pkg.auth', 'Fix login bug', 1000, 'cargo test', NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["description"].as_str().unwrap(), "Fix login bug");
+        assert_eq!(obj["reward"].as_i64().unwrap(), 1000);
+        assert_eq!(obj["status"].as_str().unwrap(), "open");
+        assert!(obj.contains_key("id"));
+    }
+
+    #[pg_test]
+    fn test_list_bounties() {
+        mint_to_self(10000);
+
+        Spi::run("SELECT kerai.create_bounty('pkg.a', 'Bounty A', 500, NULL, NULL)")
+            .unwrap();
+        Spi::run("SELECT kerai.create_bounty('pkg.b', 'Bounty B', 600, NULL, NULL)")
+            .unwrap();
+
+        // List all
+        let all = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_bounties(NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = all.0.as_array().unwrap();
+        assert!(arr.len() >= 2, "Should have at least 2 bounties");
+
+        // List with status filter
+        let open = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_bounties('open', NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let oarr = open.0.as_array().unwrap();
+        for b in oarr {
+            assert_eq!(b["status"].as_str().unwrap(), "open");
+        }
+    }
+
+    #[pg_test]
+    fn test_claim_bounty() {
+        mint_to_self(5000);
+
+        let bounty = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_bounty('pkg.claim', 'Claim test', 500, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let bounty_id = bounty.0["id"].as_str().unwrap().to_string();
+
+        // Create claimer wallet
+        let claimer = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Claimer')",
+        )
+        .unwrap()
+        .unwrap();
+        let claimer_id = claimer.0["id"].as_str().unwrap().to_string();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.claim_bounty('{}'::uuid, '{}'::uuid)",
+            bounty_id, claimer_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["status"].as_str().unwrap(), "claimed");
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "cannot be claimed")]
+    fn test_claim_bounty_already_claimed() {
+        mint_to_self(5000);
+
+        let bounty = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_bounty('pkg.double_claim', 'Double claim', 500, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let bounty_id = bounty.0["id"].as_str().unwrap().to_string();
+
+        let claimer1 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Claimer1')",
+        )
+        .unwrap()
+        .unwrap();
+        let claimer1_id = claimer1.0["id"].as_str().unwrap().to_string();
+
+        let claimer2 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Claimer2')",
+        )
+        .unwrap()
+        .unwrap();
+        let claimer2_id = claimer2.0["id"].as_str().unwrap().to_string();
+
+        // First claim succeeds
+        Spi::run(&format!(
+            "SELECT kerai.claim_bounty('{}'::uuid, '{}'::uuid)",
+            bounty_id, claimer1_id,
+        ))
+        .unwrap();
+
+        // Second claim should fail
+        Spi::run(&format!(
+            "SELECT kerai.claim_bounty('{}'::uuid, '{}'::uuid)",
+            bounty_id, claimer2_id,
+        ))
+        .unwrap();
+    }
+
+    #[pg_test]
+    fn test_settle_bounty() {
+        mint_to_self(5000);
+
+        let bounty = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_bounty('pkg.settle', 'Settle test', 1000, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let bounty_id = bounty.0["id"].as_str().unwrap().to_string();
+
+        let claimer = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_wallet('human', 'Settler')",
+        )
+        .unwrap()
+        .unwrap();
+        let claimer_id = claimer.0["id"].as_str().unwrap().to_string();
+
+        // Claim
+        Spi::run(&format!(
+            "SELECT kerai.claim_bounty('{}'::uuid, '{}'::uuid)",
+            bounty_id, claimer_id,
+        ))
+        .unwrap();
+
+        // Settle
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.settle_bounty('{}'::uuid)",
+            bounty_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["status"].as_str().unwrap(), "paid");
+        assert_eq!(result.0["reward"].as_i64().unwrap(), 1000);
+
+        // Verify claimer received payment
+        let bal = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.get_wallet_balance('{}'::uuid)",
+            claimer_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(bal.0["balance"].as_i64().unwrap(), 1000);
+    }
+
+    #[pg_test]
+    #[should_panic(expected = "must be 'claimed' to settle")]
+    fn test_settle_bounty_not_claimed() {
+        mint_to_self(5000);
+
+        let bounty = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_bounty('pkg.bad_settle', 'Bad settle', 500, NULL, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let bounty_id = bounty.0["id"].as_str().unwrap().to_string();
+
+        // Try to settle without claiming first
+        Spi::run(&format!(
+            "SELECT kerai.settle_bounty('{}'::uuid)",
+            bounty_id,
+        ))
+        .unwrap();
     }
 
     /// sql_escape helper for tests
