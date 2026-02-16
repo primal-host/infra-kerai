@@ -1,10 +1,13 @@
+pub mod agent;
 pub mod checkout;
 pub mod commit;
+pub mod consensus_cmd;
 pub mod find;
 pub mod info;
 pub mod init;
 pub mod log;
 pub mod peer;
+pub mod perspective;
 pub mod ping;
 pub mod query;
 pub mod refs;
@@ -63,6 +66,30 @@ pub enum Command {
     Tree {
         path: Option<String>,
     },
+    AgentAdd {
+        name: String,
+        kind: String,
+        model: Option<String>,
+    },
+    AgentList {
+        kind: Option<String>,
+    },
+    AgentRemove {
+        name: String,
+    },
+    AgentInfo {
+        name: String,
+    },
+    Perspective {
+        agent: String,
+        context_id: Option<String>,
+        min_weight: Option<f64>,
+    },
+    Consensus {
+        context_id: Option<String>,
+        min_agents: Option<i32>,
+        min_weight: Option<f64>,
+    },
 }
 
 pub fn run(
@@ -114,5 +141,33 @@ pub fn run(
         } => find::run(&mut client, &pattern, kind.as_deref(), limit, format),
         Command::Refs { symbol } => refs::run(&mut client, &symbol, format),
         Command::Tree { path } => tree::run(&mut client, path.as_deref(), format),
+        Command::AgentAdd { name, kind, model } => {
+            agent::add(&mut client, &name, &kind, model.as_deref(), format)
+        }
+        Command::AgentList { kind } => agent::list(&mut client, kind.as_deref(), format),
+        Command::AgentRemove { name } => agent::remove(&mut client, &name),
+        Command::AgentInfo { name } => agent::info(&mut client, &name, format),
+        Command::Perspective {
+            agent,
+            context_id,
+            min_weight,
+        } => perspective::run(
+            &mut client,
+            &agent,
+            context_id.as_deref(),
+            min_weight,
+            format,
+        ),
+        Command::Consensus {
+            context_id,
+            min_agents,
+            min_weight,
+        } => consensus_cmd::run(
+            &mut client,
+            context_id.as_deref(),
+            min_agents,
+            min_weight,
+            format,
+        ),
     }
 }

@@ -110,6 +110,41 @@ enum CliCommand {
         /// ltree path pattern (subtree or lquery with wildcards)
         path: Option<String>,
     },
+
+    /// Manage AI agents
+    Agent {
+        #[command(subcommand)]
+        action: AgentAction,
+    },
+
+    /// Show an agent's perspectives
+    Perspective {
+        /// Agent name
+        agent: String,
+
+        /// Filter by context node ID
+        #[arg(long)]
+        context: Option<String>,
+
+        /// Minimum weight threshold
+        #[arg(long)]
+        min_weight: Option<f64>,
+    },
+
+    /// Show multi-agent consensus
+    Consensus {
+        /// Filter by context node ID
+        #[arg(long)]
+        context: Option<String>,
+
+        /// Minimum number of agreeing agents (default 2)
+        #[arg(long)]
+        min_agents: Option<i32>,
+
+        /// Minimum average weight threshold
+        #[arg(long)]
+        min_weight: Option<f64>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -144,6 +179,42 @@ enum PeerAction {
     /// Show peer details
     Info {
         /// Peer name
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentAction {
+    /// Register or update an agent
+    Add {
+        /// Agent name
+        name: String,
+
+        /// Agent kind: human, llm, tool, swarm
+        #[arg(long)]
+        kind: String,
+
+        /// Model identifier (e.g. claude-opus-4-6)
+        #[arg(long)]
+        model: Option<String>,
+    },
+
+    /// List all agents
+    List {
+        /// Filter by kind
+        #[arg(long)]
+        kind: Option<String>,
+    },
+
+    /// Remove an agent
+    Remove {
+        /// Agent name to remove
+        name: String,
+    },
+
+    /// Show agent details
+    Info {
+        /// Agent name
         name: String,
     },
 }
@@ -188,6 +259,34 @@ fn main() {
         },
         CliCommand::Refs { symbol } => commands::Command::Refs { symbol },
         CliCommand::Tree { path } => commands::Command::Tree { path },
+        CliCommand::Agent { action } => match action {
+            AgentAction::Add { name, kind, model } => commands::Command::AgentAdd {
+                name,
+                kind,
+                model,
+            },
+            AgentAction::List { kind } => commands::Command::AgentList { kind },
+            AgentAction::Remove { name } => commands::Command::AgentRemove { name },
+            AgentAction::Info { name } => commands::Command::AgentInfo { name },
+        },
+        CliCommand::Perspective {
+            agent,
+            context,
+            min_weight,
+        } => commands::Command::Perspective {
+            agent,
+            context_id: context,
+            min_weight,
+        },
+        CliCommand::Consensus {
+            context,
+            min_agents,
+            min_weight,
+        } => commands::Command::Consensus {
+            context_id: context,
+            min_agents,
+            min_weight,
+        },
     };
 
     if let Err(e) = commands::run(command, &cli.profile, cli.db.as_deref(), &cli.format) {
