@@ -23,6 +23,10 @@ const VALID_OP_TYPES: &[&str] = &[
     "delete_association",
     "create_task",
     "update_task_status",
+    "create_wallet",
+    "transfer_koi",
+    "create_bounty",
+    "update_bounty_status",
 ];
 
 /// Validate that op_type is known and node_id requirements are met.
@@ -40,6 +44,10 @@ pub fn validate_op(op_type: &str, node_id: Option<&str>, _payload: &Value) {
         "delete_association",
         "create_task",
         "update_task_status",
+        "create_wallet",
+        "transfer_koi",
+        "create_bounty",
+        "update_bounty_status",
     ];
     if !no_node_id_ops.contains(&op_type) && node_id.is_none() {
         error!("op_type '{}' requires a node_id", op_type);
@@ -92,6 +100,10 @@ pub fn apply(
         "delete_association" => apply_delete_association(payload),
         "create_task" => apply_create_task(payload),
         "update_task_status" => apply_update_task_status(payload),
+        "create_wallet" => apply_create_wallet(payload),
+        "transfer_koi" => apply_transfer_koi(payload),
+        "create_bounty" => apply_create_bounty(payload),
+        "update_bounty_status" => apply_update_bounty_status(payload),
         _ => error!("Unknown op_type: '{}'", op_type),
     }
 }
@@ -486,4 +498,161 @@ fn apply_delete_association(payload: &Value) -> String {
     ))
     .unwrap();
     agent_id.to_string()
+}
+
+/// INSERT a new wallet. Returns the wallet UUID.
+fn apply_create_wallet(payload: &Value) -> String {
+    let wallet_type = payload["wallet_type"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_wallet requires 'wallet_type' in payload"));
+    let public_key_hex = payload["public_key_hex"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_wallet requires 'public_key_hex' in payload"));
+    let fingerprint = payload["fingerprint"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_wallet requires 'fingerprint' in payload"));
+
+    let label_sql = match payload.get("label").and_then(|v| v.as_str()) {
+        Some(l) => format!("'{}'", sql_escape(l)),
+        None => "NULL".to_string(),
+    };
+    let instance_sql = match payload.get("instance_id").and_then(|v| v.as_str()) {
+        Some(i) => format!("'{}'::uuid", sql_escape(i)),
+        None => "NULL".to_string(),
+    };
+
+    let wallet_id = Spi::get_one::<String>(&format!(
+        "INSERT INTO kerai.wallets (instance_id, public_key, key_fingerprint, wallet_type, label)
+         VALUES ({}, '\\x{}'::bytea, '{}', '{}', {})
+         RETURNING id::text",
+        instance_sql,
+        sql_escape(public_key_hex),
+        sql_escape(fingerprint),
+        sql_escape(wallet_type),
+        label_sql,
+    ))
+    .unwrap()
+    .unwrap();
+    wallet_id
+}
+
+/// Transfer kōi between wallets via ledger INSERT.
+fn apply_transfer_koi(payload: &Value) -> String {
+    let from_wallet = payload.get("from_wallet").and_then(|v| v.as_str());
+    let to_wallet = payload["to_wallet"]
+        .as_str()
+        .unwrap_or_else(|| error!("transfer_koi requires 'to_wallet' in payload"));
+    let amount = payload["amount"]
+        .as_i64()
+        .unwrap_or_else(|| error!("transfer_koi requires 'amount' in payload"));
+    let reason = payload["reason"]
+        .as_str()
+        .unwrap_or_else(|| error!("transfer_koi requires 'reason' in payload"));
+    let timestamp = payload["timestamp"]
+        .as_i64()
+        .unwrap_or_else(|| error!("transfer_koi requires 'timestamp' in payload"));
+
+    let from_sql = match from_wallet {
+        Some(f) => format!("'{}'::uuid", sql_escape(f)),
+        None => "NULL".to_string(),
+    };
+    let ref_id_sql = match payload.get("reference_id").and_then(|v| v.as_str()) {
+        Some(r) => format!("'{}'::uuid", sql_escape(r)),
+        None => "NULL".to_string(),
+    };
+    let ref_type_sql = match payload.get("reference_type").and_then(|v| v.as_str()) {
+        Some(r) => format!("'{}'", sql_escape(r)),
+        None => "NULL".to_string(),
+    };
+
+    let ledger_id = Spi::get_one::<String>(&format!(
+        "INSERT INTO kerai.ledger (from_wallet, to_wallet, amount, reason, reference_id, reference_type, timestamp)
+         VALUES ({}, '{}'::uuid, {}, '{}', {}, {}, {})
+         RETURNING id::text",
+        from_sql,
+        sql_escape(to_wallet),
+        amount,
+        sql_escape(reason),
+        ref_id_sql,
+        ref_type_sql,
+        timestamp,
+    ))
+    .unwrap()
+    .unwrap();
+    ledger_id
+}
+
+/// INSERT a new bounty. Returns the bounty UUID.
+fn apply_create_bounty(payload: &Value) -> String {
+    let poster_wallet = payload["poster_wallet"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_bounty requires 'poster_wallet' in payload"));
+    let scope = payload["scope"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_bounty requires 'scope' in payload"));
+    let description = payload["description"]
+        .as_str()
+        .unwrap_or_else(|| error!("create_bounty requires 'description' in payload"));
+    let reward = payload["reward"]
+        .as_i64()
+        .unwrap_or_else(|| error!("create_bounty requires 'reward' in payload"));
+
+    let cmd_sql = match payload.get("success_command").and_then(|v| v.as_str()) {
+        Some(c) => format!("'{}'", sql_escape(c)),
+        None => "NULL".to_string(),
+    };
+    let expires_sql = match payload.get("expires_at").and_then(|v| v.as_str()) {
+        Some(e) => format!("'{}'::timestamptz", sql_escape(e)),
+        None => "NULL".to_string(),
+    };
+
+    let bounty_id = Spi::get_one::<String>(&format!(
+        "INSERT INTO kerai.bounties (poster_wallet, scope, description, success_command, reward, expires_at)
+         VALUES ('{}'::uuid, '{}'::ltree, '{}', {}, {}, {})
+         RETURNING id::text",
+        sql_escape(poster_wallet),
+        sql_escape(scope),
+        sql_escape(description),
+        cmd_sql,
+        reward,
+        expires_sql,
+    ))
+    .unwrap()
+    .unwrap();
+    bounty_id
+}
+
+/// UPDATE a bounty's status. Returns the bounty UUID.
+fn apply_update_bounty_status(payload: &Value) -> String {
+    let bounty_id = payload["bounty_id"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_bounty_status requires 'bounty_id' in payload"));
+    let new_status = payload["new_status"]
+        .as_str()
+        .unwrap_or_else(|| error!("update_bounty_status requires 'new_status' in payload"));
+
+    let valid_statuses = ["open", "claimed", "paid", "expired", "cancelled"];
+    if !valid_statuses.contains(&new_status) {
+        error!(
+            "Invalid bounty status '{}'. Must be one of: open, claimed, paid, expired, cancelled",
+            new_status
+        );
+    }
+
+    let mut extra_sets = String::new();
+    if let Some(claimed_by) = payload.get("claimed_by").and_then(|v| v.as_str()) {
+        extra_sets.push_str(&format!(", claimed_by = '{}'::uuid", sql_escape(claimed_by)));
+    }
+    if new_status == "paid" {
+        extra_sets.push_str(", verified_at = now()");
+    }
+
+    Spi::run(&format!(
+        "UPDATE kerai.bounties SET status = '{}'{}  WHERE id = '{}'::uuid",
+        sql_escape(new_status),
+        extra_sets,
+        sql_escape(bounty_id),
+    ))
+    .unwrap();
+    bounty_id.to_string()
 }
