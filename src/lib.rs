@@ -499,7 +499,7 @@ impl Foo {
     }
 
     #[pg_test]
-    #[should_panic(expected = "Node not found")]
+    #[should_panic(expected = "Failed to query node")]
     fn test_reconstruct_nonexistent_node() {
         Spi::get_one::<String>(
             "SELECT kerai.reconstruct_file('00000000-0000-0000-0000-000000000000'::uuid)",

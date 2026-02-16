@@ -54,10 +54,10 @@ fn reconstruct_crate(crate_name: &str) -> pgrx::JsonB {
             crate_node_id.replace('\'', "''")
         );
 
-        let result = client.select(&query, None, None).unwrap();
+        let result = client.select(&query, None, &[]).unwrap();
         for row in result {
-            let file_id: String = row.get_by_name("id").unwrap().unwrap_or_default();
-            let filename: String = row.get_by_name("content").unwrap().unwrap_or_default();
+            let file_id: String = row.get_by_name::<String, _>("id").unwrap().unwrap_or_default();
+            let filename: String = row.get_by_name::<String, _>("content").unwrap().unwrap_or_default();
 
             let raw = assembler::assemble_file(&file_id);
             let formatted = formatter::format_source(&raw);
