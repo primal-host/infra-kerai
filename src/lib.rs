@@ -1,11 +1,14 @@
 pgrx::pg_module_magic!();
 
+mod agents;
 mod bootstrap;
+mod consensus;
 mod crdt;
 mod functions;
 mod identity;
 mod parser;
 mod peers;
+mod perspectives;
 mod query;
 mod reconstruct;
 mod schema;
@@ -1208,6 +1211,342 @@ impl Config {
             let has_file = arr.iter().any(|v| v["kind"].as_str() == Some("file"));
             assert!(has_file, "Ancestors should include the file node");
         }
+    }
+
+    // --- Plan 08: Agent perspectives tests ---
+
+    #[pg_test]
+    fn test_register_agent() {
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.register_agent('test-llm', 'llm', 'claude-opus-4-6', NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["name"].as_str().unwrap(), "test-llm");
+        assert_eq!(obj["kind"].as_str().unwrap(), "llm");
+        assert!(obj["is_new"].as_bool().unwrap());
+        assert!(obj.contains_key("id"));
+    }
+
+    #[pg_test]
+    fn test_register_agent_idempotent() {
+        Spi::run("SELECT kerai.register_agent('idem-agent', 'llm', 'model-a', NULL)")
+            .unwrap();
+        let r2 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.register_agent('idem-agent', 'tool', 'model-b', NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = r2.0.as_object().unwrap();
+        assert!(!obj["is_new"].as_bool().unwrap());
+        assert_eq!(obj["kind"].as_str().unwrap(), "tool");
+    }
+
+    #[pg_test]
+    fn test_list_agents() {
+        Spi::run("SELECT kerai.register_agent('list-agent', 'human', NULL, NULL)")
+            .unwrap();
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.list_agents(NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = result.0.as_array().unwrap();
+        let names: Vec<&str> = arr.iter().filter_map(|v| v["name"].as_str()).collect();
+        assert!(names.contains(&"list-agent"));
+    }
+
+    #[pg_test]
+    fn test_remove_agent() {
+        Spi::run("SELECT kerai.register_agent('remove-agent', 'tool', NULL, NULL)")
+            .unwrap();
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.remove_agent('remove-agent')",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(result.0["removed"].as_bool().unwrap());
+    }
+
+    #[pg_test]
+    fn test_set_perspective() {
+        // Register agent and create a node
+        Spi::run("SELECT kerai.register_agent('persp-agent', 'llm', NULL, NULL)")
+            .unwrap();
+        let node = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"persp_fn\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let node_id = node.0["node_id"].as_str().unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.set_perspective('persp-agent', '{}'::uuid, 0.8, NULL, 'important function')",
+            node_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["agent"].as_str().unwrap(), "persp-agent");
+        assert_eq!(obj["weight"].as_f64().unwrap(), 0.8);
+
+        // Verify stored
+        let count = Spi::get_one::<i64>(&format!(
+            "SELECT count(*)::bigint FROM kerai.perspectives WHERE node_id = '{}'::uuid",
+            node_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[pg_test]
+    fn test_set_perspective_with_context() {
+        Spi::run("SELECT kerai.register_agent('ctx-agent', 'llm', NULL, NULL)")
+            .unwrap();
+        // Create two nodes — one as target, one as context
+        let n1 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"ctx_target\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let n2 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"module\", \"content\": \"ctx_scope\", \"position\": 1}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let target_id = n1.0["node_id"].as_str().unwrap();
+        let context_id = n2.0["node_id"].as_str().unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.set_perspective('ctx-agent', '{}'::uuid, 0.5, '{}'::uuid, NULL)",
+            target_id, context_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(result.0["context_id"].as_str().is_some());
+    }
+
+    #[pg_test]
+    fn test_delete_perspective() {
+        Spi::run("SELECT kerai.register_agent('del-persp-agent', 'llm', NULL, NULL)")
+            .unwrap();
+        let node = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"del_persp_fn\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let node_id = node.0["node_id"].as_str().unwrap();
+
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('del-persp-agent', '{}'::uuid, 0.9, NULL, NULL)",
+            node_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.delete_perspective('del-persp-agent', '{}'::uuid, NULL)",
+            node_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(result.0["deleted"].as_bool().unwrap());
+    }
+
+    #[pg_test]
+    fn test_get_perspectives_with_filter() {
+        Spi::run("SELECT kerai.register_agent('filter-agent', 'llm', NULL, NULL)")
+            .unwrap();
+        let n1 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"high_fn\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let n2 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"low_fn\", \"position\": 1}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let high_id = n1.0["node_id"].as_str().unwrap();
+        let low_id = n2.0["node_id"].as_str().unwrap();
+
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('filter-agent', '{}'::uuid, 0.9, NULL, NULL)",
+            high_id,
+        ))
+        .unwrap();
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('filter-agent', '{}'::uuid, 0.2, NULL, NULL)",
+            low_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.get_perspectives('filter-agent', NULL, 0.5)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = result.0.as_array().unwrap();
+        assert_eq!(arr.len(), 1, "Only the high-weight perspective should pass filter");
+        assert_eq!(arr[0]["weight"].as_f64().unwrap(), 0.9);
+    }
+
+    #[pg_test]
+    fn test_set_association() {
+        Spi::run("SELECT kerai.register_agent('assoc-agent', 'llm', NULL, NULL)")
+            .unwrap();
+        let n1 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"assoc_src\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let n2 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"assoc_tgt\", \"position\": 1}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let src_id = n1.0["node_id"].as_str().unwrap();
+        let tgt_id = n2.0["node_id"].as_str().unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.set_association('assoc-agent', '{}'::uuid, '{}'::uuid, 0.7, 'depends_on', 'tight coupling')",
+            src_id, tgt_id,
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["relation"].as_str().unwrap(), "depends_on");
+        assert_eq!(obj["weight"].as_f64().unwrap(), 0.7);
+    }
+
+    #[pg_test]
+    fn test_delete_association() {
+        Spi::run("SELECT kerai.register_agent('del-assoc-agent', 'llm', NULL, NULL)")
+            .unwrap();
+        let n1 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"del_assoc_src\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let n2 = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"del_assoc_tgt\", \"position\": 1}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let src_id = n1.0["node_id"].as_str().unwrap();
+        let tgt_id = n2.0["node_id"].as_str().unwrap();
+
+        Spi::run(&format!(
+            "SELECT kerai.set_association('del-assoc-agent', '{}'::uuid, '{}'::uuid, 0.5, 'similar_to', NULL)",
+            src_id, tgt_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.delete_association('del-assoc-agent', '{}'::uuid, '{}'::uuid, 'similar_to')",
+            src_id, tgt_id,
+        ))
+        .unwrap()
+        .unwrap();
+        assert!(result.0["deleted"].as_bool().unwrap());
+    }
+
+    #[pg_test]
+    fn test_consensus_multiple_agents() {
+        // Register two agents
+        Spi::run("SELECT kerai.register_agent('cons-agent-1', 'llm', NULL, NULL)")
+            .unwrap();
+        Spi::run("SELECT kerai.register_agent('cons-agent-2', 'llm', NULL, NULL)")
+            .unwrap();
+
+        // Create a node
+        let node = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"consensus_fn\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let node_id = node.0["node_id"].as_str().unwrap();
+
+        // Both agents rate the same node
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('cons-agent-1', '{}'::uuid, 0.8, NULL, NULL)",
+            node_id,
+        ))
+        .unwrap();
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('cons-agent-2', '{}'::uuid, 0.6, NULL, NULL)",
+            node_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.consensus(NULL, 2, NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let arr = result.0.as_array().unwrap();
+        assert!(!arr.is_empty(), "Should find consensus with 2+ agents");
+        let first = &arr[0];
+        assert_eq!(first["agent_count"].as_i64().unwrap(), 2);
+        let avg = first["avg_weight"].as_f64().unwrap();
+        assert!((avg - 0.7).abs() < 0.001, "Average should be ~0.7, got {}", avg);
+    }
+
+    #[pg_test]
+    fn test_perspective_diff() {
+        Spi::run("SELECT kerai.register_agent('diff-agent-a', 'llm', NULL, NULL)")
+            .unwrap();
+        Spi::run("SELECT kerai.register_agent('diff-agent-b', 'llm', NULL, NULL)")
+            .unwrap();
+
+        // Create shared and unique nodes
+        let shared = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"diff_shared\", \"position\": 0}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let only_a_node = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.apply_op('insert_node', NULL, '{\"kind\": \"fn\", \"content\": \"diff_only_a\", \"position\": 1}'::jsonb)",
+        )
+        .unwrap()
+        .unwrap();
+        let shared_id = shared.0["node_id"].as_str().unwrap();
+        let only_a_id = only_a_node.0["node_id"].as_str().unwrap();
+
+        // Agent A rates both nodes with different weights
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('diff-agent-a', '{}'::uuid, 0.9, NULL, NULL)",
+            shared_id,
+        ))
+        .unwrap();
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('diff-agent-a', '{}'::uuid, 0.5, NULL, NULL)",
+            only_a_id,
+        ))
+        .unwrap();
+
+        // Agent B rates shared node with different weight
+        Spi::run(&format!(
+            "SELECT kerai.set_perspective('diff-agent-b', '{}'::uuid, 0.3, NULL, NULL)",
+            shared_id,
+        ))
+        .unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.perspective_diff('diff-agent-a', 'diff-agent-b', NULL)",
+        )
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+
+        let only_in_a = obj["only_in_a"].as_array().unwrap();
+        assert!(!only_in_a.is_empty(), "Agent A should have unique perspectives");
+
+        let disagreements = obj["disagreements"].as_array().unwrap();
+        assert!(!disagreements.is_empty(), "Should have at least one disagreement on shared node");
+        let diff = disagreements[0]["diff"].as_f64().unwrap();
+        assert!((diff - 0.6).abs() < 0.001, "Diff should be ~0.6, got {}", diff);
     }
 
     /// sql_escape helper for tests
