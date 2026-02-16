@@ -163,6 +163,18 @@ enum CliCommand {
         #[command(subcommand)]
         action: MarketAction,
     },
+
+    /// Manage kōi wallets
+    Wallet {
+        #[command(subcommand)]
+        action: WalletAction,
+    },
+
+    /// Manage bounties
+    Bounty {
+        #[command(subcommand)]
+        action: BountyAction,
+    },
 }
 
 #[derive(Subcommand)]
@@ -378,6 +390,121 @@ enum MarketAction {
 }
 
 #[derive(Subcommand)]
+enum WalletAction {
+    /// Create a new wallet
+    Create {
+        /// Wallet type: human, agent, or external
+        #[arg(long)]
+        r#type: String,
+
+        /// Optional label
+        #[arg(long)]
+        label: Option<String>,
+    },
+
+    /// List wallets
+    List {
+        /// Filter by type
+        #[arg(long)]
+        r#type: Option<String>,
+    },
+
+    /// Show wallet balance
+    Balance {
+        /// Wallet ID (default: self instance wallet)
+        wallet_id: Option<String>,
+    },
+
+    /// Transfer kōi between wallets
+    Transfer {
+        /// Source wallet ID
+        #[arg(long)]
+        from: String,
+
+        /// Destination wallet ID
+        #[arg(long)]
+        to: String,
+
+        /// Amount to transfer
+        #[arg(long)]
+        amount: i64,
+
+        /// Transfer reason
+        #[arg(long)]
+        reason: Option<String>,
+    },
+
+    /// Show transaction history
+    History {
+        /// Wallet ID
+        wallet_id: String,
+
+        /// Maximum entries
+        #[arg(long, default_value = "50")]
+        limit: i32,
+    },
+}
+
+#[derive(Subcommand)]
+enum BountyAction {
+    /// Create a bounty
+    Create {
+        /// Scope (ltree path)
+        #[arg(long)]
+        scope: String,
+
+        /// Bounty description
+        #[arg(long)]
+        description: String,
+
+        /// Reward in kōi
+        #[arg(long)]
+        reward: i64,
+
+        /// Command to verify success
+        #[arg(long)]
+        success_command: Option<String>,
+
+        /// Expiration timestamp (ISO 8601)
+        #[arg(long)]
+        expires: Option<String>,
+    },
+
+    /// List bounties
+    List {
+        /// Filter by status
+        #[arg(long)]
+        status: Option<String>,
+
+        /// Filter by scope
+        #[arg(long)]
+        scope: Option<String>,
+    },
+
+    /// Show bounty details
+    Show {
+        /// Bounty ID
+        bounty_id: String,
+    },
+
+    /// Claim a bounty
+    Claim {
+        /// Bounty ID
+        bounty_id: String,
+
+        /// Claimer wallet ID
+        #[arg(long)]
+        wallet: String,
+    },
+
+    /// Settle a claimed bounty (pay reward)
+    Settle {
+        /// Bounty ID
+        bounty_id: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum AgentAction {
     /// Register or update an agent
     Add {
@@ -516,6 +643,53 @@ fn main() {
                 commands::Command::SwarmLeaderboard { task_id }
             }
             SwarmAction::Progress { task_id } => commands::Command::SwarmProgress { task_id },
+        },
+        CliCommand::Wallet { action } => match action {
+            WalletAction::Create { r#type, label } => commands::Command::WalletCreate {
+                wallet_type: r#type,
+                label,
+            },
+            WalletAction::List { r#type } => commands::Command::WalletList {
+                wallet_type: r#type,
+            },
+            WalletAction::Balance { wallet_id } => commands::Command::WalletBalance { wallet_id },
+            WalletAction::Transfer {
+                from,
+                to,
+                amount,
+                reason,
+            } => commands::Command::WalletTransfer {
+                from,
+                to,
+                amount,
+                reason,
+            },
+            WalletAction::History { wallet_id, limit } => commands::Command::WalletHistory {
+                wallet_id,
+                limit,
+            },
+        },
+        CliCommand::Bounty { action } => match action {
+            BountyAction::Create {
+                scope,
+                description,
+                reward,
+                success_command,
+                expires,
+            } => commands::Command::BountyCreate {
+                scope,
+                description,
+                reward,
+                success_command,
+                expires,
+            },
+            BountyAction::List { status, scope } => commands::Command::BountyList { status, scope },
+            BountyAction::Show { bounty_id } => commands::Command::BountyShow { bounty_id },
+            BountyAction::Claim { bounty_id, wallet } => commands::Command::BountyClaim {
+                bounty_id,
+                wallet_id: wallet,
+            },
+            BountyAction::Settle { bounty_id } => commands::Command::BountySettle { bounty_id },
         },
         CliCommand::Market { action } => match action {
             MarketAction::Create {

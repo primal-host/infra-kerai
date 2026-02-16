@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod bounty;
 pub mod checkout;
 pub mod commit;
 pub mod consensus_cmd;
@@ -17,6 +18,7 @@ pub mod sync;
 pub mod task;
 pub mod tree;
 pub mod version;
+pub mod wallet;
 
 use crate::config;
 use crate::db;
@@ -157,6 +159,47 @@ pub enum Command {
         since: Option<String>,
     },
     MarketStats,
+    WalletCreate {
+        wallet_type: String,
+        label: Option<String>,
+    },
+    WalletList {
+        wallet_type: Option<String>,
+    },
+    WalletBalance {
+        wallet_id: Option<String>,
+    },
+    WalletTransfer {
+        from: String,
+        to: String,
+        amount: i64,
+        reason: Option<String>,
+    },
+    WalletHistory {
+        wallet_id: String,
+        limit: i32,
+    },
+    BountyCreate {
+        scope: String,
+        description: String,
+        reward: i64,
+        success_command: Option<String>,
+        expires: Option<String>,
+    },
+    BountyList {
+        status: Option<String>,
+        scope: Option<String>,
+    },
+    BountyShow {
+        bounty_id: String,
+    },
+    BountyClaim {
+        bounty_id: String,
+        wallet_id: String,
+    },
+    BountySettle {
+        bounty_id: String,
+    },
 }
 
 pub fn run(
@@ -324,5 +367,47 @@ pub fn run(
             market::commons(&mut client, scope.as_deref(), since.as_deref(), format)
         }
         Command::MarketStats => market::stats(&mut client, format),
+        Command::WalletCreate { wallet_type, label } => {
+            wallet::create(&mut client, &wallet_type, label.as_deref(), format)
+        }
+        Command::WalletList { wallet_type } => {
+            wallet::list(&mut client, wallet_type.as_deref(), format)
+        }
+        Command::WalletBalance { wallet_id } => {
+            wallet::balance(&mut client, wallet_id.as_deref(), format)
+        }
+        Command::WalletTransfer {
+            from,
+            to,
+            amount,
+            reason,
+        } => wallet::transfer(&mut client, &from, &to, amount, reason.as_deref(), format),
+        Command::WalletHistory { wallet_id, limit } => {
+            wallet::history(&mut client, &wallet_id, limit, format)
+        }
+        Command::BountyCreate {
+            scope,
+            description,
+            reward,
+            success_command,
+            expires,
+        } => bounty::create(
+            &mut client,
+            &scope,
+            &description,
+            reward,
+            success_command.as_deref(),
+            expires.as_deref(),
+            format,
+        ),
+        Command::BountyList { status, scope } => {
+            bounty::list(&mut client, status.as_deref(), scope.as_deref(), format)
+        }
+        Command::BountyShow { bounty_id } => bounty::show(&mut client, &bounty_id, format),
+        Command::BountyClaim {
+            bounty_id,
+            wallet_id,
+        } => bounty::claim(&mut client, &bounty_id, &wallet_id, format),
+        Command::BountySettle { bounty_id } => bounty::settle(&mut client, &bounty_id, format),
     }
 }
