@@ -79,4 +79,4 @@ So from the original list, **Steadfast**, **Forecast**, and **Astute** are the s
 
 ---
 
-*The project was later renamed to **Kerai** (ker.ai) — from 家来 (kerai), a Japanese word meaning retainer or servant. The name reflects the project's evolution toward AI agents that serve developers: loyal retainers working the codebase. The domain `ker.ai` was already held. The repo lives at `primal-host/kerai` on Gitea and GitHub.*
+*The project was later renamed to **Kerai** (ker.ai) — from 家来 (kerai, Japanese for "staff"). The name reflects the project's evolution toward AI agents that work alongside developers. The domain `ker.ai` was already held. The repo lives at `primal-host/kerai` on Gitea and GitHub.*
