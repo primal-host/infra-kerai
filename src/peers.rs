@@ -36,12 +36,12 @@ fn register_peer(
         None => "NULL".to_string(),
     };
 
-    // Check if already exists by fingerprint
+    // Check if already exists by fingerprint (unwrap_or: 0 rows → None)
     let existing = Spi::get_one::<String>(&format!(
         "SELECT id::text FROM kerai.instances WHERE key_fingerprint = '{}'",
         sql_escape(&fp),
     ))
-    .unwrap();
+    .unwrap_or(None);
 
     let is_new;
     let instance_id;
@@ -125,7 +125,7 @@ fn get_peer(fingerprint: &str) -> pgrx::JsonB {
         ) FROM kerai.instances WHERE key_fingerprint = '{}'",
         sql_escape(fingerprint),
     ))
-    .unwrap();
+    .unwrap_or(None);
 
     match row {
         Some(j) => j,
@@ -136,12 +136,12 @@ fn get_peer(fingerprint: &str) -> pgrx::JsonB {
 /// Remove a non-self peer by name. Returns JSON with removal status.
 #[pg_extern]
 fn remove_peer(name: &str) -> pgrx::JsonB {
-    // Check it's not self
+    // Check it's not self (unwrap_or: 0 rows → None)
     let is_self = Spi::get_one::<bool>(&format!(
         "SELECT is_self FROM kerai.instances WHERE name = '{}'",
         sql_escape(name),
     ))
-    .unwrap();
+    .unwrap_or(None);
 
     match is_self {
         Some(true) => error!("Cannot remove self instance"),
