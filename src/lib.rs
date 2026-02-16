@@ -4,6 +4,7 @@ mod bootstrap;
 mod functions;
 mod identity;
 mod parser;
+mod reconstruct;
 mod schema;
 mod workers;
 

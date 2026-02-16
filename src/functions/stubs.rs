@@ -1,23 +1,7 @@
 use pgrx::prelude::*;
 
 // Plan 02: Parsing — moved to src/parser/mod.rs
-
-// Plan 03: Reconstruction
-#[pg_extern]
-fn reconstruct_file(node_id: pgrx::Uuid) -> String {
-    format!(
-        "STUB: reconstruct_file('{}') — implemented in Plan 03",
-        node_id
-    )
-}
-
-#[pg_extern]
-fn reconstruct_crate(crate_name: &str) -> String {
-    format!(
-        "STUB: reconstruct_crate('{}') — implemented in Plan 03",
-        crate_name
-    )
-}
+// Plan 03: Reconstruction — moved to src/reconstruct/mod.rs
 
 // Plan 04: CRDT Operations
 #[pg_extern]
