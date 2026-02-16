@@ -414,7 +414,7 @@ The key economic insight: knowledge is worth roughly what it would cost to indep
 
 Private knowledge is a temporary state, not a permanent one. In a system with vast compute, independent rediscovery is inevitable — someone *will* reproduce your finding. The economic layer doesn't fight this; it works with it.
 
-The mechanism is a Dutch auction: knowledge is attested with a starting price, the price drops over time, bidders accumulate, and when the price hits a floor, the knowledge is released to the entire network for free. The auction determines *how long* knowledge stays private and *how much* the producer is compensated before it joins the commons.
+The mechanism is a Dutch auction: knowledge is attested with a starting price, the price drops over time, bidders accumulate, and when the price hits a floor, the knowledge is released to the entire network for free. The auction determines *how long* knowledge stays private and *how much* the producer is compensated before it joins the Koi Pond.
 
 ```
 PRIVATE → ATTESTED → AUCTIONED → SETTLED → OPEN
