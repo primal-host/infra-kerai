@@ -72,6 +72,54 @@ enum CliCommand {
         #[arg(short, long)]
         message: Option<String>,
     },
+
+    /// Manage peer instances
+    Peer {
+        #[command(subcommand)]
+        action: PeerAction,
+    },
+
+    /// Sync CRDT operations with a peer
+    Sync {
+        /// Peer name to sync with
+        peer: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum PeerAction {
+    /// Register or update a peer
+    Add {
+        /// Peer name
+        name: String,
+
+        /// Ed25519 public key (hex)
+        #[arg(long)]
+        public_key: String,
+
+        /// Peer endpoint URL
+        #[arg(long)]
+        endpoint: Option<String>,
+
+        /// Peer Postgres connection string
+        #[arg(long)]
+        connection: Option<String>,
+    },
+
+    /// List all peers
+    List,
+
+    /// Remove a peer
+    Remove {
+        /// Peer name to remove
+        name: String,
+    },
+
+    /// Show peer details
+    Info {
+        /// Peer name
+        name: String,
+    },
 }
 
 fn main() {
@@ -86,6 +134,23 @@ fn main() {
         CliCommand::Checkout { file } => commands::Command::Checkout { file },
         CliCommand::Log { author, limit } => commands::Command::Log { author, limit },
         CliCommand::Commit { message } => commands::Command::Commit { message },
+        CliCommand::Peer { action } => match action {
+            PeerAction::Add {
+                name,
+                public_key,
+                endpoint,
+                connection,
+            } => commands::Command::PeerAdd {
+                name,
+                public_key,
+                endpoint,
+                connection,
+            },
+            PeerAction::List => commands::Command::PeerList,
+            PeerAction::Remove { name } => commands::Command::PeerRemove { name },
+            PeerAction::Info { name } => commands::Command::PeerInfo { name },
+        },
+        CliCommand::Sync { peer } => commands::Command::Sync { peer },
     };
 
     if let Err(e) = commands::run(command, &cli.profile, cli.db.as_deref(), &cli.format) {

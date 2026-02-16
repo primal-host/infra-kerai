@@ -3,8 +3,10 @@ pub mod commit;
 pub mod info;
 pub mod init;
 pub mod log;
+pub mod peer;
 pub mod ping;
 pub mod query;
+pub mod sync;
 pub mod version;
 
 use crate::config;
@@ -30,6 +32,22 @@ pub enum Command {
     },
     Commit {
         message: Option<String>,
+    },
+    PeerAdd {
+        name: String,
+        public_key: String,
+        endpoint: Option<String>,
+        connection: Option<String>,
+    },
+    PeerList,
+    PeerRemove {
+        name: String,
+    },
+    PeerInfo {
+        name: String,
+    },
+    Sync {
+        peer: String,
     },
 }
 
@@ -58,5 +76,22 @@ pub fn run(
         Command::Checkout { file } => checkout::run(&mut client, file.as_deref()),
         Command::Log { author, limit } => log::run(&mut client, author.as_deref(), limit, format),
         Command::Commit { message } => commit::run(&mut client, message.as_deref()),
+        Command::PeerAdd {
+            name,
+            public_key,
+            endpoint,
+            connection,
+        } => peer::add(
+            &mut client,
+            &name,
+            &public_key,
+            endpoint.as_deref(),
+            connection.as_deref(),
+            format,
+        ),
+        Command::PeerList => peer::list(&mut client, format),
+        Command::PeerRemove { name } => peer::remove(&mut client, &name),
+        Command::PeerInfo { name } => peer::info(&mut client, &name, format),
+        Command::Sync { peer } => sync::run(&mut client, &peer),
     }
 }
