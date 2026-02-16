@@ -1,5 +1,6 @@
 pub mod documents;
 pub mod health;
+pub mod models;
 pub mod nodes;
 pub mod perspectives;
 pub mod search;
@@ -39,6 +40,15 @@ pub fn build_router(pool: Arc<Pool>, notify_tx: broadcast::Sender<String>) -> Ro
         // Perspectives
         .route("/perspectives", get(perspectives::get_perspectives))
         .route("/consensus", get(perspectives::consensus))
+        // Models
+        .route("/models", post(models::create_model))
+        .route("/models/train", post(models::train_model))
+        .route("/models/predict", post(models::predict_next))
+        .route("/models/search", get(models::neural_search))
+        .route("/models/ensemble", post(models::ensemble_predict))
+        .route("/models/{agent}/info", get(models::model_info))
+        .route("/models/{agent}", delete(models::delete_model))
+        .route("/models/feedback", post(models::record_selection))
         .with_state(pool);
 
     // WebSocket needs its own state
