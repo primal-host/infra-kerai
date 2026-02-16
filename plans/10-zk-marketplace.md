@@ -31,7 +31,7 @@ CREATE TABLE auctions (
     starting_price      bigint NOT NULL,          -- initial asking price
     floor_price         bigint NOT NULL DEFAULT 0, -- open-source trigger (0 = always goes open)
     current_price       bigint NOT NULL,          -- drops over time
-    price_decrement     bigint NOT NULL,          -- credits per interval
+    price_decrement     bigint NOT NULL,          -- kōi per interval
     decrement_interval  interval NOT NULL,        -- how often price drops
     min_bidders         integer DEFAULT 1,        -- minimum bidders to trigger settlement
     release_type        text NOT NULL DEFAULT 'simultaneous', -- all bidders receive at once
@@ -64,9 +64,9 @@ CREATE INDEX idx_bids_bidder ON bids(bidder_wallet);
 **How the Dutch clock works:**
 
 ```
-starting_price = 80,000 credits
+starting_price = 80,000 kōi
 floor_price = 0
-price_decrement = 1,000 credits
+price_decrement = 1,000 kōi
 decrement_interval = 1 hour
 
 Hour 0:  current_price = 80,000  (no bidders)
@@ -74,14 +74,14 @@ Hour 10: current_price = 70,000  (2 bidders at max_price >= 70,000)
 Hour 30: current_price = 50,000  (5 bidders)
 Hour 55: current_price = 25,000  (12 bidders, min_bidders met → SETTLE)
   → All 12 bidders pay 25,000. Knowledge released simultaneously.
-  → Seller receives 12 × 25,000 = 300,000 credits.
+  → Seller receives 12 × 25,000 = 300,000 kōi.
   → 24 hours after settlement, knowledge goes open to the network.
 
 OR:
 
 Hour 80: current_price = 0 (floor hit, no settlement)
   → Knowledge released to entire network for free.
-  → Seller receives 0 credits but knowledge enters the commons.
+  → Seller receives 0 kōi but knowledge enters the commons.
 ```
 
 ### 10.2 Settlement and Simultaneous Release
@@ -196,9 +196,9 @@ kerai market commons [--scope path] [--since date]
 kerai market stats
 # Output:
 #   Active auctions: 47
-#   Settled this week: 12 (total value: 450,000 credits)
+#   Settled this week: 12 (total value: 450,000 kōi)
 #   Open-sourced this week: 8
-#   Average settlement price: 37,500 credits
+#   Average settlement price: 37,500 kōi
 #   Most active scope: pkg.auth.* (15 auctions)
 ```
 
@@ -209,7 +209,7 @@ AI agents that help instances set optimal auction parameters:
 - Analyze historical settlement data to estimate demand
 - Monitor reproduction cost trends (is independent discovery getting cheaper?)
 - Recommend starting price, floor price, decrement rate based on knowledge scope and uniqueness
-- Track market signals: if nobody bids on `pkg.auth.*` knowledge above 20,000 credits, stop pricing it at 80,000
+- Track market signals: if nobody bids on `pkg.auth.*` knowledge above 20,000 kōi, stop pricing it at 80,000
 
 This is the point where AI agents participate on both sides of the market — producing knowledge, pricing it, bidding for knowledge they need, and deciding whether to buy or reproduce independently.
 
