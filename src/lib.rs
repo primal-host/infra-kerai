@@ -3141,6 +3141,250 @@ impl Config {
         assert!(obj.contains_key("instance_balance"), "Status should include instance_balance");
     }
 
+    // ────── MicroGPT tests ──────
+
+    #[pg_test]
+    fn test_tensor_matmul() {
+        use crate::microgpt::tensor::Tensor;
+        let a = Tensor {
+            data: vec![1.0, 2.0, 3.0, 4.0],
+            shape: vec![2, 2],
+        };
+        let b = Tensor {
+            data: vec![5.0, 6.0, 7.0, 8.0],
+            shape: vec![2, 2],
+        };
+        let c = a.matmul(&b);
+        assert_eq!(c.data, vec![19.0, 22.0, 43.0, 50.0]);
+        assert_eq!(c.shape, vec![2, 2]);
+    }
+
+    #[pg_test]
+    fn test_tensor_softmax() {
+        use crate::microgpt::tensor::Tensor;
+        let t = Tensor {
+            data: vec![1.0, 2.0, 3.0, 100.0, 200.0, 300.0],
+            shape: vec![2, 3],
+        };
+        let s = t.softmax();
+        // Each row should sum to 1.0
+        let sum1: f32 = s.data[0..3].iter().sum();
+        let sum2: f32 = s.data[3..6].iter().sum();
+        assert!((sum1 - 1.0).abs() < 1e-5, "Row 1 sum: {}", sum1);
+        assert!((sum2 - 1.0).abs() < 1e-5, "Row 2 sum: {}", sum2);
+    }
+
+    #[pg_test]
+    fn test_forward_pass_shape() {
+        use crate::microgpt::model::{MicroGPT, ModelConfig};
+        let config = ModelConfig {
+            vocab_size: 20,
+            dim: 16,
+            n_heads: 4,
+            n_layers: 1,
+            context_len: 8,
+        };
+        let model = MicroGPT::new(config);
+        let tokens = vec![0, 5, 10, 15];
+        let (logits, _cache) = model.forward(&tokens);
+        assert_eq!(logits.shape, vec![4, 20], "Logits shape: {:?}", logits.shape);
+    }
+
+    #[pg_test]
+    fn test_weight_roundtrip() {
+        use crate::microgpt::model::{MicroGPT, ModelConfig};
+        let config = ModelConfig {
+            vocab_size: 10,
+            dim: 8,
+            n_heads: 2,
+            n_layers: 1,
+            context_len: 4,
+        };
+        let model = MicroGPT::new(config.clone());
+        let weight_map = model.to_weight_map();
+        let model2 = MicroGPT::from_weight_map(config, &weight_map);
+        let tokens = vec![0, 1, 2];
+        let (logits1, _) = model.forward(&tokens);
+        let (logits2, _) = model2.forward(&tokens);
+        assert_eq!(logits1.data, logits2.data, "Roundtrip should produce identical logits");
+    }
+
+    #[pg_test]
+    fn test_train_loss_decreases() {
+        use crate::microgpt::model::{MicroGPT, ModelConfig};
+        use crate::microgpt::optimizer::Adam;
+        let config = ModelConfig {
+            vocab_size: 10,
+            dim: 16,
+            n_heads: 4,
+            n_layers: 1,
+            context_len: 8,
+        };
+        let mut model = MicroGPT::new(config);
+        let mut optimizer = Adam::new(model.param_count(), 0.01);
+        // Simple repeating sequence: 0,1,2,...,9,0,1,2,...
+        let sequences: Vec<Vec<usize>> = (0..10)
+            .map(|start| (start..start + 6).map(|i| i % 10).collect())
+            .collect();
+        let mut first_loss = 0.0f32;
+        let mut last_loss = 0.0f32;
+        for step in 0..50 {
+            let loss = model.train_step(&sequences, &mut optimizer);
+            if step == 0 {
+                first_loss = loss;
+            }
+            last_loss = loss;
+        }
+        assert!(
+            last_loss < first_loss,
+            "Loss should decrease: first={:.4} last={:.4}",
+            first_loss,
+            last_loss
+        );
+    }
+
+    #[pg_test]
+    fn test_predict_next_returns_results() {
+        use crate::microgpt::model::{MicroGPT, ModelConfig};
+        let config = ModelConfig {
+            vocab_size: 10,
+            dim: 8,
+            n_heads: 2,
+            n_layers: 1,
+            context_len: 4,
+        };
+        let model = MicroGPT::new(config);
+        let preds = model.predict_next(&[0, 1, 2], 5);
+        assert!(!preds.is_empty(), "Should return predictions");
+        assert!(preds.len() <= 5, "Should return at most 5");
+        // Probabilities should sum roughly to 1 (top-k subset)
+        let sum: f32 = preds.iter().map(|(_, p)| p).sum();
+        assert!(sum <= 1.0 + 1e-5, "Probabilities sum: {}", sum);
+    }
+
+    #[pg_test]
+    fn test_create_model() {
+        // Parse some source to populate nodes
+        Spi::run(
+            "SELECT kerai.parse_source('fn hello() { } fn world() { }', 'test_model.rs')",
+        )
+        .unwrap();
+
+        // Create an agent
+        Spi::run(
+            "INSERT INTO kerai.agents (name, kind, wallet_id)
+             VALUES ('model_test_agent', 'llm',
+                     (SELECT id FROM kerai.wallets WHERE instance_id = (SELECT id FROM kerai.instances WHERE is_self = true) LIMIT 1))
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .unwrap();
+
+        // Create model
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.create_model('model_test_agent')",
+        )
+        .unwrap()
+        .unwrap();
+
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["status"].as_str().unwrap(), "created");
+        assert!(obj["vocab_size"].as_u64().unwrap() > 0);
+        assert!(obj["param_count"].as_u64().unwrap() > 0);
+
+        // Verify weights stored in DB
+        let weight_count = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.model_weights
+             WHERE agent_id = (SELECT id FROM kerai.agents WHERE name = 'model_test_agent')",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(weight_count > 0, "Weights should be stored in DB");
+
+        // Verify vocab stored in DB
+        let vocab_count = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.model_vocab
+             WHERE model_id = (SELECT id FROM kerai.agents WHERE name = 'model_test_agent')",
+        )
+        .unwrap()
+        .unwrap();
+        assert!(vocab_count > 0, "Vocab should be stored in DB");
+    }
+
+    #[pg_test]
+    fn test_model_info() {
+        Spi::run(
+            "SELECT kerai.parse_source('struct Foo { x: i32 }', 'test_info.rs')",
+        )
+        .unwrap();
+        Spi::run(
+            "INSERT INTO kerai.agents (name, kind, wallet_id)
+             VALUES ('info_agent', 'llm',
+                     (SELECT id FROM kerai.wallets WHERE instance_id = (SELECT id FROM kerai.instances WHERE is_self = true) LIMIT 1))
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .unwrap();
+        Spi::run("SELECT kerai.create_model('info_agent')").unwrap();
+
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.model_info('info_agent')",
+        )
+        .unwrap()
+        .unwrap();
+
+        let obj = result.0.as_object().unwrap();
+        assert_eq!(obj["agent"].as_str().unwrap(), "info_agent");
+        assert!(obj["vocab_size"].as_u64().unwrap() > 0);
+        assert!(obj.contains_key("dim"));
+        assert!(obj.contains_key("training_runs"));
+    }
+
+    #[pg_test]
+    fn test_delete_model() {
+        Spi::run(
+            "SELECT kerai.parse_source('fn zz() {}', 'test_delete.rs')",
+        )
+        .unwrap();
+        Spi::run(
+            "INSERT INTO kerai.agents (name, kind, wallet_id)
+             VALUES ('del_agent', 'llm',
+                     (SELECT id FROM kerai.wallets WHERE instance_id = (SELECT id FROM kerai.instances WHERE is_self = true) LIMIT 1))
+             ON CONFLICT (name) DO NOTHING",
+        )
+        .unwrap();
+        Spi::run("SELECT kerai.create_model('del_agent')").unwrap();
+
+        // Delete
+        let result = Spi::get_one::<pgrx::JsonB>(
+            "SELECT kerai.delete_model('del_agent')",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(result.0["status"].as_str().unwrap(), "deleted");
+
+        // Verify weights removed
+        let count = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.model_weights
+             WHERE agent_id = (SELECT id FROM kerai.agents WHERE name = 'del_agent')",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[pg_test]
+    fn test_tensor_byte_roundtrip() {
+        use crate::microgpt::tensor::Tensor;
+        let t = Tensor {
+            data: vec![3.14, -2.71, 0.0, 1e10, -1e-10, f32::MAX],
+            shape: vec![2, 3],
+        };
+        let bytes = t.to_bytes();
+        let t2 = Tensor::from_bytes(&bytes, vec![2, 3]);
+        for (a, b) in t.data.iter().zip(t2.data.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits(), "Byte roundtrip should be exact");
+        }
+    }
+
     /// sql_escape helper for tests
     fn sql_escape(s: &str) -> String {
         s.replace('\'', "''")
