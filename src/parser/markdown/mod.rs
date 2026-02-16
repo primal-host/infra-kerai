@@ -4,9 +4,48 @@ use serde_json::json;
 use std::time::Instant;
 use uuid::Uuid;
 
-use crate::parser::ast_walker::{NodeRow, EdgeRow};
+use crate::parser::ast_walker::NodeRow;
 use crate::parser::inserter;
 use crate::parser::path_builder::PathContext;
+
+fn sql_escape(s: &str) -> String {
+    s.replace('\'', "''")
+}
+
+/// Delete existing markdown document nodes and their children for a given filename.
+fn delete_markdown_nodes(instance_id: &str, filename: &str) {
+    // Delete edges first, then nodes via recursive CTE
+    Spi::run(&format!(
+        "WITH RECURSIVE descendants AS (
+            SELECT id FROM kerai.nodes
+            WHERE instance_id = '{}'::uuid
+            AND kind = 'document' AND content = '{}'
+            UNION ALL
+            SELECT n.id FROM kerai.nodes n
+            JOIN descendants d ON n.parent_id = d.id
+        )
+        DELETE FROM kerai.edges WHERE source_id IN (SELECT id FROM descendants)
+            OR target_id IN (SELECT id FROM descendants)",
+        sql_escape(instance_id),
+        sql_escape(filename),
+    ))
+    .ok();
+
+    Spi::run(&format!(
+        "WITH RECURSIVE descendants AS (
+            SELECT id FROM kerai.nodes
+            WHERE instance_id = '{}'::uuid
+            AND kind = 'document' AND content = '{}'
+            UNION ALL
+            SELECT n.id FROM kerai.nodes n
+            JOIN descendants d ON n.parent_id = d.id
+        )
+        DELETE FROM kerai.nodes WHERE id IN (SELECT id FROM descendants)",
+        sql_escape(instance_id),
+        sql_escape(filename),
+    ))
+    .ok();
+}
 
 pub mod kinds;
 mod walker;
@@ -20,6 +59,9 @@ fn parse_markdown(source: &str, filename: &str) -> pgrx::JsonB {
     let instance_id = super::get_self_instance_id();
 
     // Delete existing nodes for this filename (idempotent re-parse)
+    // delete_file_nodes looks for kind='file'; markdown uses kind='document',
+    // so delete document subtree explicitly.
+    delete_markdown_nodes(&instance_id, filename);
     inserter::delete_file_nodes(&instance_id, filename);
 
     let path_ctx = PathContext::with_root(filename);

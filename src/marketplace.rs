@@ -11,9 +11,9 @@ fn sql_escape(s: &str) -> String {
 fn create_auction(
     attestation_id: pgrx::Uuid,
     starting_price: i64,
-    floor_price: default!(i64, 0),
     price_decrement: i64,
     decrement_interval_secs: i64,
+    floor_price: default!(i64, 0),
     min_bidders: default!(i32, 1),
     open_delay_hours: default!(i32, 24),
 ) -> pgrx::JsonB {

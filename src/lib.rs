@@ -1844,7 +1844,7 @@ impl Config {
     fn test_create_auction() {
         let att_id = create_test_attestation("pkg.auth", "expertise");
         let result = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 80000, 0, 1000, 3600, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 80000, 1000, 3600, 0, 1, 24)",
             att_id,
         ))
         .unwrap()
@@ -1860,13 +1860,13 @@ impl Config {
     fn test_create_auction_duplicate() {
         let att_id = create_test_attestation("pkg.dup", "expertise");
         Spi::run(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 50000, 0, 500, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 50000, 500, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap();
         // Second auction on same attestation should fail
         Spi::run(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 50000, 0, 500, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 50000, 500, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap();
@@ -1876,7 +1876,7 @@ impl Config {
     fn test_place_bid() {
         let att_id = create_test_attestation("pkg.bid", "state_transition");
         let auction = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 50000, 0, 1000, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 50000, 1000, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap()
@@ -1897,7 +1897,7 @@ impl Config {
     fn test_tick_auction_price_decrement() {
         let att_id = create_test_attestation("pkg.tick", "expertise");
         let auction = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 10000, 0, 2000, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 10000, 2000, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap()
@@ -1918,7 +1918,7 @@ impl Config {
     fn test_tick_auction_floor_hit() {
         let att_id = create_test_attestation("pkg.floor", "expertise");
         let auction = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 3000, 0, 5000, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 3000, 5000, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap()
@@ -1940,7 +1940,7 @@ impl Config {
     fn test_tick_auction_settlement_ready() {
         let att_id = create_test_attestation("pkg.settle_ready", "expertise");
         let auction = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 50000, 0, 1000, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 50000, 1000, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap()
@@ -1968,7 +1968,7 @@ impl Config {
     fn test_settle_auction() {
         let att_id = create_test_attestation("pkg.settle", "expertise");
         let auction = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 10000, 0, 1000, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 10000, 1000, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap()
@@ -2000,7 +2000,7 @@ impl Config {
     fn test_open_source_auction() {
         let att_id = create_test_attestation("pkg.opensource", "expertise");
         let auction = Spi::get_one::<pgrx::JsonB>(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 5000, 0, 500, 60, 1, 0)",
+            "SELECT kerai.create_auction('{}'::uuid, 5000, 500, 60, 0, 1, 0)",
             att_id,
         ))
         .unwrap()
@@ -2033,7 +2033,7 @@ impl Config {
     fn test_market_browse() {
         let att_id = create_test_attestation("pkg.browse", "expertise");
         Spi::run(&format!(
-            "SELECT kerai.create_auction('{}'::uuid, 20000, 0, 500, 60, 1, 24)",
+            "SELECT kerai.create_auction('{}'::uuid, 20000, 500, 60, 0, 1, 24)",
             att_id,
         ))
         .unwrap();
