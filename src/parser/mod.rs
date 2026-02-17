@@ -197,8 +197,10 @@ fn parse_source(source: &str, filename: &str) -> pgrx::JsonB {
     }))
 }
 
-/// Internal: parse a single file's source, insert nodes/edges, return counts.
-fn parse_single_file(
+/// Parse a single Rust file's source, insert nodes/edges, return counts.
+///
+/// `parent_id` allows parenting the file node under a repo directory node.
+pub(crate) fn parse_single_file(
     source: &str,
     filename: &str,
     instance_id: &str,
