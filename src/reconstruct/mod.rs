@@ -6,6 +6,7 @@ mod assembler;
 mod derive_orderer;
 mod formatter;
 mod go;
+mod c;
 mod import_sorter;
 mod markdown;
 
