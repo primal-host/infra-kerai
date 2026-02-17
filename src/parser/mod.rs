@@ -16,11 +16,13 @@ mod inserter;
 mod kinds;
 #[allow(dead_code)]
 mod metadata;
+mod normalizer;
 #[allow(dead_code)]
 mod path_builder;
 pub mod markdown;
 
 use ast_walker::NodeRow;
+use comment_extractor::{CommentBlock, CommentPlacement};
 use path_builder::PathContext;
 
 /// Get the self instance ID from the database.
@@ -198,8 +200,11 @@ fn parse_single_file(
     path_root: &str,
     position: i32,
 ) -> (usize, usize) {
-    // Parse with syn
-    let syn_file = match syn::parse_file(source) {
+    // 1. Normalize source
+    let normalized = normalizer::normalize(source);
+
+    // 2. Parse with syn
+    let syn_file = match syn::parse_file(&normalized) {
         Ok(f) => f,
         Err(e) => {
             warning!("Failed to parse {}: {}", filename, e);
@@ -207,7 +212,7 @@ fn parse_single_file(
         }
     };
 
-    // Create file node
+    // 3. Create file node
     let file_node_id = Uuid::new_v4().to_string();
     let path_ctx = PathContext::with_root(path_root);
 
@@ -220,49 +225,79 @@ fn parse_single_file(
         parent_id: parent_id.map(|s| s.to_string()),
         position,
         path: path_ctx.path(),
-        metadata: json!({"line_count": source.lines().count()}),
+        metadata: json!({"line_count": normalized.lines().count()}),
         span_start: None,
         span_end: None,
     };
 
     inserter::insert_nodes(&[file_node]);
 
-    // Walk AST
+    // 4. Walk AST
     let (mut nodes, mut edges) =
         ast_walker::walk_file(&syn_file, &file_node_id, instance_id, path_ctx);
 
-    // Extract comments and add as nodes/edges
-    let comments = comment_extractor::extract_comments(source);
-    for comment in &comments {
-        if comment.is_doc {
-            // Doc comments are already handled via syn attributes, skip
-            continue;
-        }
+    // 5. Collect string literal exclusion zones
+    let exclusions = comment_extractor::collect_string_spans(&syn_file);
+
+    // 6. Extract comments with exclusion zones
+    let raw_comments = comment_extractor::extract_comments(&normalized, &exclusions);
+
+    // 7. Group consecutive line comments into blocks
+    let mut blocks = comment_extractor::group_comments(raw_comments);
+
+    // Filter out doc comments (already handled via syn attributes)
+    blocks.retain(|b| !b.is_doc);
+
+    // 8. Match comment blocks to AST nodes (sets placement)
+    let matches = match_comments_to_ast(&mut blocks, &nodes);
+
+    // 9. Create NodeRow + EdgeRow for each comment block
+    for (block_idx, block) in blocks.iter().enumerate() {
         let comment_id = Uuid::new_v4().to_string();
-        let kind = kinds::COMMENT;
+        let kind = if !block.is_block_style && block.lines.len() > 1 {
+            kinds::COMMENT_BLOCK
+        } else {
+            kinds::COMMENT
+        };
+        let style = if block.is_block_style { "block" } else { "line" };
+        let placement = match block.placement {
+            CommentPlacement::Above => "above",
+            CommentPlacement::Trailing => "trailing",
+            CommentPlacement::Between => "between",
+            CommentPlacement::Eof => "eof",
+        };
+
+        let content = block.lines.join("\n");
 
         nodes.push(NodeRow {
             id: comment_id.clone(),
             instance_id: instance_id.to_string(),
             kind: kind.to_string(),
             language: Some("rust".to_string()),
-            content: Some(comment.text.clone()),
+            content: Some(content),
             parent_id: Some(file_node_id.clone()),
-            position: comment.line as i32,
+            position: block.start_line as i32,
             path: None,
-            metadata: json!({"line": comment.line, "col": comment.col}),
-            span_start: Some(comment.line as i32),
-            span_end: Some(comment.line as i32),
+            metadata: json!({
+                "start_line": block.start_line,
+                "end_line": block.end_line,
+                "col": block.col,
+                "placement": placement,
+                "style": style,
+                "line_count": block.lines.len(),
+            }),
+            span_start: Some(block.start_line as i32),
+            span_end: Some(block.end_line as i32),
         });
 
-        // Find nearest AST node after this comment to create "documents" edge
-        if let Some(target_node) = find_nearest_node_after_line(&nodes, comment.line as i32) {
+        // Create "documents" edge if matched to a node
+        if let Some(ref target_id) = matches[block_idx] {
             edges.push(ast_walker::EdgeRow {
                 id: Uuid::new_v4().to_string(),
                 source_id: comment_id,
-                target_id: target_node,
+                target_id: target_id.clone(),
                 relation: "documents".to_string(),
-                metadata: json!({}),
+                metadata: json!({"placement": placement}),
             });
         }
     }
@@ -276,25 +311,85 @@ fn parse_single_file(
     (node_count, edge_count)
 }
 
-/// Find the nearest AST node with span_start >= the given line.
-fn find_nearest_node_after_line(nodes: &[NodeRow], line: i32) -> Option<String> {
-    let mut best: Option<(i32, &str)> = None;
+/// Match comment blocks to AST nodes and classify placement.
+///
+/// Returns a Vec with one entry per block: Some(node_id) for the target,
+/// or None for eof comments.
+fn match_comments_to_ast(
+    blocks: &mut [CommentBlock],
+    nodes: &[NodeRow],
+) -> Vec<Option<String>> {
+    // Build sorted list of top-level AST nodes by span_start
+    // (only nodes with span info, excluding comments themselves)
+    let mut ast_spans: Vec<(i32, &str)> = nodes
+        .iter()
+        .filter(|n| {
+            n.span_start.is_some()
+                && n.kind != kinds::COMMENT
+                && n.kind != kinds::COMMENT_BLOCK
+        })
+        .map(|n| (n.span_start.unwrap(), n.id.as_str()))
+        .collect();
+    ast_spans.sort_by_key(|&(line, _)| line);
 
-    for node in nodes {
-        if let Some(start) = node.span_start {
-            if start >= line {
-                match best {
-                    Some((best_line, _)) if start < best_line => {
-                        best = Some((start, &node.id));
-                    }
-                    None => {
-                        best = Some((start, &node.id));
-                    }
-                    _ => {}
+    let mut results = Vec::with_capacity(blocks.len());
+
+    for block in blocks.iter_mut() {
+        let start = block.start_line as i32;
+        let end = block.end_line as i32;
+
+        // Find the nearest AST node AFTER this comment block
+        let next_node = ast_spans
+            .iter()
+            .find(|&&(line, _)| line > end);
+
+        // Find the nearest AST node BEFORE or AT the start line
+        let prev_node = ast_spans
+            .iter()
+            .rev()
+            .find(|&&(line, _)| line < start);
+
+        // Find AST node ON the same line as a single-line comment
+        let same_line_node = if start == end {
+            ast_spans.iter().find(|&&(line, _)| line == start)
+        } else {
+            None
+        };
+
+        // Classify placement
+        if let Some(&(node_line, node_id)) = same_line_node {
+            // Trailing: comment is on the same line as an AST node
+            // (AST node starts on same line, code is before the comment)
+            if node_line == start {
+                block.placement = CommentPlacement::Trailing;
+                results.push(Some(node_id.to_string()));
+                continue;
+            }
+        }
+
+        match next_node {
+            Some(&(next_line, next_id)) => {
+                if next_line == end + 1 {
+                    // Above: directly above next node (no blank line gap)
+                    block.placement = CommentPlacement::Above;
+                    results.push(Some(next_id.to_string()));
+                } else if prev_node.is_some() {
+                    // Between: gap before next node AND a previous node exists
+                    block.placement = CommentPlacement::Between;
+                    results.push(Some(next_id.to_string()));
+                } else {
+                    // Above (with gap): no previous node, comment is before first node
+                    block.placement = CommentPlacement::Above;
+                    results.push(Some(next_id.to_string()));
                 }
+            }
+            None => {
+                // Eof: no AST node after this comment
+                block.placement = CommentPlacement::Eof;
+                results.push(None);
             }
         }
     }
 
-    best.map(|(_, id)| id.to_string())
+    results
 }
