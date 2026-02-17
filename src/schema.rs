@@ -567,6 +567,29 @@ CREATE TABLE kerai.reward_log (
     requires = ["table_wallets"]
 );
 
+// Table: repositories — ingested git repositories
+extension_sql!(
+    r#"
+CREATE TABLE kerai.repositories (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id UUID NOT NULL REFERENCES kerai.instances(id),
+    url         TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    local_path  TEXT NOT NULL,
+    head_commit TEXT,
+    last_sync   TIMESTAMPTZ,
+    node_id     UUID REFERENCES kerai.nodes(id),
+    metadata    JSONB DEFAULT '{}'::jsonb,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX idx_repositories_url ON kerai.repositories (instance_id, url);
+CREATE INDEX idx_repositories_name ON kerai.repositories (name);
+"#,
+    name = "table_repositories",
+    requires = ["table_instances", "table_nodes"]
+);
+
 // Seed data: default reward schedule
 extension_sql!(
     r#"
@@ -577,7 +600,8 @@ INSERT INTO kerai.reward_schedule (work_type, reward) VALUES
     ('create_version', 5),
     ('bounty_settlement', 20),
     ('peer_sync', 15),
-    ('model_training', 25);
+    ('model_training', 25),
+    ('mirror_repo', 100);
 "#,
     name = "seed_reward_schedule",
     requires = ["table_reward_schedule"]
