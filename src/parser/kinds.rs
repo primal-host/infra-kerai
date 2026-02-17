@@ -118,6 +118,11 @@ pub enum Kind {
     // Function signature parts
     Param,
     ReturnType,
+
+    // Catch-all "other" variants for item types
+    ItemOther,
+    ImplItemOther,
+    TraitItemOther,
 }
 
 impl Kind {
@@ -229,6 +234,10 @@ impl Kind {
             // Function signature
             Kind::Param => "param",
             Kind::ReturnType => "return_type",
+            // Catch-all others
+            Kind::ItemOther => "item_other",
+            Kind::ImplItemOther => "impl_item_other",
+            Kind::TraitItemOther => "trait_item_other",
         }
     }
 
@@ -259,6 +268,7 @@ impl Kind {
         Kind::TypeSlice, Kind::TypeFn, Kind::TypeImplTrait, Kind::TypeDynTrait,
         Kind::TypeNever, Kind::TypeInfer, Kind::TypeOther,
         Kind::Param, Kind::ReturnType,
+        Kind::ItemOther, Kind::ImplItemOther, Kind::TraitItemOther,
     ];
 }
 
@@ -367,6 +377,9 @@ impl std::str::FromStr for Kind {
             "type_other" => Ok(Kind::TypeOther),
             "param" => Ok(Kind::Param),
             "return_type" => Ok(Kind::ReturnType),
+            "item_other" => Ok(Kind::ItemOther),
+            "impl_item_other" => Ok(Kind::ImplItemOther),
+            "trait_item_other" => Ok(Kind::TraitItemOther),
             other => Err(format!("unknown kind: {}", other)),
         }
     }

@@ -2,7 +2,7 @@
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use super::kinds;
+use super::kinds::Kind;
 use super::metadata;
 use super::path_builder::PathContext;
 
@@ -44,7 +44,7 @@ struct WalkCtx {
 impl WalkCtx {
     fn new_node(
         &mut self,
-        kind: &str,
+        kind: Kind,
         content: Option<String>,
         parent_id: Option<&str>,
         position: i32,
@@ -56,7 +56,7 @@ impl WalkCtx {
         self.nodes.push(NodeRow {
             id: id.clone(),
             instance_id: self.instance_id.clone(),
-            kind: kind.to_string(),
+            kind: kind.as_str().to_string(),
             language: Some("rust".to_string()),
             content,
             parent_id: parent_id.map(|s| s.to_string()),
@@ -163,7 +163,7 @@ fn walk_item(ctx: &mut WalkCtx, item: &syn::Item, parent_id: &str, position: i32
         }
         _ => {
             ctx.new_node(
-                "item_other",
+                Kind::ItemOther,
                 None,
                 Some(parent_id),
                 position,
@@ -183,7 +183,7 @@ fn walk_fn(ctx: &mut WalkCtx, item_fn: &syn::ItemFn, parent_id: &str, position: 
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::FN,
+        Kind::Fn,
         Some(name),
         Some(parent_id),
         position,
@@ -217,7 +217,7 @@ fn walk_struct(ctx: &mut WalkCtx, item: &syn::ItemStruct, parent_id: &str, posit
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::STRUCT,
+        Kind::Struct,
         Some(name),
         Some(parent_id),
         position,
@@ -261,7 +261,7 @@ fn walk_field(ctx: &mut WalkCtx, field: &syn::Field, parent_id: &str, position: 
     }
 
     let node_id = ctx.new_node(
-        kinds::FIELD,
+        Kind::Field,
         name.clone(),
         Some(parent_id),
         position,
@@ -287,7 +287,7 @@ fn walk_enum(ctx: &mut WalkCtx, item: &syn::ItemEnum, parent_id: &str, position:
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::ENUM,
+        Kind::Enum,
         Some(name),
         Some(parent_id),
         position,
@@ -318,7 +318,7 @@ fn walk_variant(ctx: &mut WalkCtx, variant: &syn::Variant, parent_id: &str, posi
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::VARIANT,
+        Kind::Variant,
         Some(name),
         Some(parent_id),
         position,
@@ -362,7 +362,7 @@ fn walk_impl(ctx: &mut WalkCtx, item: &syn::ItemImpl, parent_id: &str, position:
     ctx.path_ctx.push(&label.replace(' ', "_").replace("::", "_"));
     let impl_span = item.impl_token.span;
     let node_id = ctx.new_node(
-        kinds::IMPL,
+        Kind::Impl,
         Some(label),
         Some(parent_id),
         position,
@@ -392,7 +392,7 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
 
             ctx.path_ctx.push(&name);
             let node_id = ctx.new_node(
-                kinds::FN,
+                Kind::Fn,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -423,7 +423,7 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
             insert_source(&mut meta, c);
             ctx.path_ctx.push(&name);
             ctx.new_node(
-                kinds::CONST,
+                Kind::Const,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -439,7 +439,7 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
             insert_source(&mut meta, t);
             ctx.path_ctx.push(&name);
             ctx.new_node(
-                kinds::TYPE_ALIAS,
+                Kind::TypeAlias,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -454,7 +454,7 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
             let mut meta = json!({});
             insert_source(&mut meta, m);
             ctx.new_node(
-                kinds::MACRO_CALL,
+                Kind::MacroCall,
                 Some(to_token_string(mac_path)),
                 Some(parent_id),
                 position,
@@ -465,7 +465,7 @@ fn walk_impl_item(ctx: &mut WalkCtx, item: &syn::ImplItem, parent_id: &str, posi
         }
         _ => {
             ctx.new_node(
-                "impl_item_other",
+                Kind::ImplItemOther,
                 None,
                 Some(parent_id),
                 position,
@@ -485,7 +485,7 @@ fn walk_trait(ctx: &mut WalkCtx, item: &syn::ItemTrait, parent_id: &str, positio
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::TRAIT,
+        Kind::Trait,
         Some(name),
         Some(parent_id),
         position,
@@ -515,7 +515,7 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
 
             ctx.path_ctx.push(&name);
             let node_id = ctx.new_node(
-                kinds::FN,
+                Kind::Fn,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -544,7 +544,7 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
             insert_source(&mut meta, t);
             ctx.path_ctx.push(&name);
             ctx.new_node(
-                kinds::TYPE_ALIAS,
+                Kind::TypeAlias,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -560,7 +560,7 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
             insert_source(&mut meta, c);
             ctx.path_ctx.push(&name);
             ctx.new_node(
-                kinds::CONST,
+                Kind::Const,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -575,7 +575,7 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
             let mut meta = json!({});
             insert_source(&mut meta, m);
             ctx.new_node(
-                kinds::MACRO_CALL,
+                Kind::MacroCall,
                 Some(to_token_string(mac_path)),
                 Some(parent_id),
                 position,
@@ -586,7 +586,7 @@ fn walk_trait_item(ctx: &mut WalkCtx, item: &syn::TraitItem, parent_id: &str, po
         }
         _ => {
             ctx.new_node(
-                "trait_item_other",
+                Kind::TraitItemOther,
                 None,
                 Some(parent_id),
                 position,
@@ -621,7 +621,7 @@ fn walk_mod(ctx: &mut WalkCtx, item: &syn::ItemMod, parent_id: &str, position: i
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::MODULE,
+        Kind::Module,
         Some(name),
         Some(parent_id),
         position,
@@ -649,7 +649,7 @@ fn walk_use(ctx: &mut WalkCtx, item: &syn::ItemUse, parent_id: &str, position: i
     insert_source(&mut meta, item);
 
     ctx.new_node(
-        kinds::USE,
+        Kind::Use,
         Some(content),
         Some(parent_id),
         position,
@@ -667,7 +667,7 @@ fn walk_const(ctx: &mut WalkCtx, item: &syn::ItemConst, parent_id: &str, positio
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
-        kinds::CONST,
+        Kind::Const,
         Some(name),
         Some(parent_id),
         position,
@@ -686,7 +686,7 @@ fn walk_static(ctx: &mut WalkCtx, item: &syn::ItemStatic, parent_id: &str, posit
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
-        kinds::STATIC,
+        Kind::Static,
         Some(name),
         Some(parent_id),
         position,
@@ -705,7 +705,7 @@ fn walk_type_alias(ctx: &mut WalkCtx, item: &syn::ItemType, parent_id: &str, pos
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
-        kinds::TYPE_ALIAS,
+        Kind::TypeAlias,
         Some(name),
         Some(parent_id),
         position,
@@ -721,9 +721,9 @@ fn walk_macro(ctx: &mut WalkCtx, item: &syn::ItemMacro, parent_id: &str, positio
     let name = to_token_string(mac_path);
 
     let kind = if item.ident.is_some() {
-        kinds::MACRO_DEF
+        Kind::MacroDef
     } else {
-        kinds::MACRO_CALL
+        Kind::MacroCall
     };
 
     let content = if let Some(ref ident) = item.ident {
@@ -733,7 +733,7 @@ fn walk_macro(ctx: &mut WalkCtx, item: &syn::ItemMacro, parent_id: &str, positio
     };
 
     let mut meta = serde_json::Map::new();
-    if kind == kinds::MACRO_CALL {
+    if kind == Kind::MacroCall {
         meta.insert("macro_path".into(), json!(name));
     }
     meta.insert("source".into(), json!(to_token_string(item)));
@@ -759,7 +759,7 @@ fn walk_extern_crate(
     let mut meta = json!({"visibility": metadata::visibility_str(&item.vis)});
     insert_source(&mut meta, item);
     ctx.new_node(
-        kinds::EXTERN_CRATE,
+        Kind::ExternCrate,
         Some(name),
         Some(parent_id),
         position,
@@ -785,7 +785,7 @@ fn walk_foreign_mod(
     let mut meta = json!({"abi": abi});
     insert_source(&mut meta, item);
     ctx.new_node(
-        kinds::FOREIGN_MOD,
+        Kind::ForeignMod,
         Some(format!("extern \"{}\"", abi)),
         Some(parent_id),
         position,
@@ -803,7 +803,7 @@ fn walk_union(ctx: &mut WalkCtx, item: &syn::ItemUnion, parent_id: &str, positio
 
     ctx.path_ctx.push(&name);
     let node_id = ctx.new_node(
-        kinds::UNION,
+        Kind::Union,
         Some(name),
         Some(parent_id),
         position,
@@ -831,7 +831,7 @@ fn walk_trait_alias(
 
     ctx.path_ctx.push(&name);
     ctx.new_node(
-        kinds::TRAIT_ALIAS,
+        Kind::TraitAlias,
         Some(name),
         Some(parent_id),
         position,
@@ -871,7 +871,7 @@ fn walk_attribute(
         }
 
         let node_id = ctx.new_node(
-            kinds::DOC_COMMENT,
+            Kind::DocComment,
             Some(content),
             Some(parent_id),
             position,
@@ -891,7 +891,7 @@ fn walk_attribute(
     }
 
     ctx.new_node(
-        kinds::ATTRIBUTE,
+        Kind::Attribute,
         Some(content),
         Some(parent_id),
         position,
@@ -905,7 +905,7 @@ fn walk_fn_arg(ctx: &mut WalkCtx, arg: &syn::FnArg, parent_id: &str, position: i
     match arg {
         syn::FnArg::Receiver(recv) => {
             ctx.new_node(
-                kinds::PARAM,
+                Kind::Param,
                 Some(to_token_string(recv)),
                 Some(parent_id),
                 position,
@@ -918,7 +918,7 @@ fn walk_fn_arg(ctx: &mut WalkCtx, arg: &syn::FnArg, parent_id: &str, position: i
             let pat = &pat_type.pat;
             let ty = &pat_type.ty;
             ctx.new_node(
-                kinds::PARAM,
+                Kind::Param,
                 Some(to_token_string(pat)),
                 Some(parent_id),
                 position,
@@ -932,7 +932,7 @@ fn walk_fn_arg(ctx: &mut WalkCtx, arg: &syn::FnArg, parent_id: &str, position: i
 
 fn walk_block(ctx: &mut WalkCtx, block: &syn::Block, parent_id: &str, position: i32) {
     let node_id = ctx.new_node(
-        kinds::BLOCK,
+        Kind::Block,
         None,
         Some(parent_id),
         position,
@@ -951,7 +951,7 @@ fn walk_stmt(ctx: &mut WalkCtx, stmt: &syn::Stmt, parent_id: &str, position: i32
         syn::Stmt::Local(local) => {
             let pat = &local.pat;
             let node_id = ctx.new_node(
-                kinds::STMT_LOCAL,
+                Kind::StmtLocal,
                 Some(to_token_string(pat)),
                 Some(parent_id),
                 position,
@@ -978,7 +978,7 @@ fn walk_stmt(ctx: &mut WalkCtx, stmt: &syn::Stmt, parent_id: &str, position: i32
         syn::Stmt::Macro(stmt_macro) => {
             let mac_path = &stmt_macro.mac.path;
             ctx.new_node(
-                kinds::MACRO_CALL,
+                Kind::MacroCall,
                 Some(to_token_string(mac_path)),
                 Some(parent_id),
                 position,
@@ -994,7 +994,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
     match expr {
         syn::Expr::Call(call) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_CALL,
+                Kind::ExprCall,
                 None,
                 Some(parent_id),
                 position,
@@ -1010,7 +1010,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::MethodCall(mc) => {
             let method_name = mc.method.to_string();
             let node_id = ctx.new_node(
-                kinds::EXPR_METHOD_CALL,
+                Kind::ExprMethodCall,
                 Some(method_name),
                 Some(parent_id),
                 position,
@@ -1025,7 +1025,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::If(expr_if) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_IF,
+                Kind::ExprIf,
                 None,
                 Some(parent_id),
                 position,
@@ -1041,7 +1041,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Match(expr_match) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_MATCH,
+                Kind::ExprMatch,
                 None,
                 Some(parent_id),
                 position,
@@ -1052,7 +1052,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
             walk_expr(ctx, &expr_match.expr, &node_id, 0);
             for (i, arm) in expr_match.arms.iter().enumerate() {
                 let arm_id = ctx.new_node(
-                    kinds::EXPR_MATCH_ARM,
+                    Kind::ExprMatchArm,
                     None,
                     Some(&node_id),
                     (i + 1) as i32,
@@ -1069,7 +1069,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Closure(closure) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_CLOSURE,
+                Kind::ExprClosure,
                 None,
                 Some(parent_id),
                 position,
@@ -1087,7 +1087,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Block(expr_block) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_BLOCK,
+                Kind::ExprBlock,
                 None,
                 Some(parent_id),
                 position,
@@ -1099,7 +1099,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::ForLoop(for_loop) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_FOR,
+                Kind::ExprFor,
                 None,
                 Some(parent_id),
                 position,
@@ -1113,7 +1113,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::While(while_loop) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_WHILE,
+                Kind::ExprWhile,
                 None,
                 Some(parent_id),
                 position,
@@ -1126,7 +1126,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Loop(loop_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_LOOP,
+                Kind::ExprLoop,
                 None,
                 Some(parent_id),
                 position,
@@ -1138,7 +1138,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Return(ret) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_RETURN,
+                Kind::ExprReturn,
                 None,
                 Some(parent_id),
                 position,
@@ -1152,7 +1152,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Break(brk) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_BREAK,
+                Kind::ExprBreak,
                 None,
                 Some(parent_id),
                 position,
@@ -1166,7 +1166,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Continue(_) => {
             ctx.new_node(
-                kinds::EXPR_CONTINUE,
+                Kind::ExprContinue,
                 None,
                 Some(parent_id),
                 position,
@@ -1177,7 +1177,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Assign(assign) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_ASSIGN,
+                Kind::ExprAssign,
                 None,
                 Some(parent_id),
                 position,
@@ -1191,7 +1191,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Binary(bin) => {
             let op = &bin.op;
             let node_id = ctx.new_node(
-                kinds::EXPR_BINARY,
+                Kind::ExprBinary,
                 Some(to_token_string(op)),
                 Some(parent_id),
                 position,
@@ -1205,7 +1205,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Unary(un) => {
             let op = &un.op;
             let node_id = ctx.new_node(
-                kinds::EXPR_UNARY,
+                Kind::ExprUnary,
                 Some(to_token_string(op)),
                 Some(parent_id),
                 position,
@@ -1218,7 +1218,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Field(field_expr) => {
             let member = &field_expr.member;
             let node_id = ctx.new_node(
-                kinds::EXPR_FIELD,
+                Kind::ExprField,
                 Some(to_token_string(member)),
                 Some(parent_id),
                 position,
@@ -1230,7 +1230,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Index(idx) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_INDEX,
+                Kind::ExprIndex,
                 None,
                 Some(parent_id),
                 position,
@@ -1243,7 +1243,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Reference(ref_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_REFERENCE,
+                Kind::ExprReference,
                 None,
                 Some(parent_id),
                 position,
@@ -1256,7 +1256,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Struct(struct_expr) => {
             let path = &struct_expr.path;
             let node_id = ctx.new_node(
-                kinds::EXPR_STRUCT,
+                Kind::ExprStruct,
                 Some(to_token_string(path)),
                 Some(parent_id),
                 position,
@@ -1267,7 +1267,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
             for (i, fv) in struct_expr.fields.iter().enumerate() {
                 let member = &fv.member;
                 let field_id = ctx.new_node(
-                    kinds::FIELD,
+                    Kind::Field,
                     Some(to_token_string(member)),
                     Some(&node_id),
                     i as i32,
@@ -1283,7 +1283,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Tuple(tuple) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_TUPLE,
+                Kind::ExprTuple,
                 None,
                 Some(parent_id),
                 position,
@@ -1297,7 +1297,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Array(arr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_ARRAY,
+                Kind::ExprArray,
                 None,
                 Some(parent_id),
                 position,
@@ -1312,7 +1312,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Cast(cast) => {
             let ty = &cast.ty;
             let node_id = ctx.new_node(
-                kinds::EXPR_CAST,
+                Kind::ExprCast,
                 None,
                 Some(parent_id),
                 position,
@@ -1325,7 +1325,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Path(expr_path) => {
             let path = &expr_path.path;
             ctx.new_node(
-                kinds::EXPR_PATH,
+                Kind::ExprPath,
                 Some(to_token_string(path)),
                 Some(parent_id),
                 position,
@@ -1337,7 +1337,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Lit(expr_lit) => {
             let lit = &expr_lit.lit;
             ctx.new_node(
-                kinds::LIT,
+                Kind::Lit,
                 Some(to_token_string(lit)),
                 Some(parent_id),
                 position,
@@ -1348,7 +1348,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Range(range) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_RANGE,
+                Kind::ExprRange,
                 None,
                 Some(parent_id),
                 position,
@@ -1365,7 +1365,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Let(let_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_LET,
+                Kind::ExprLet,
                 None,
                 Some(parent_id),
                 position,
@@ -1378,7 +1378,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Async(async_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_ASYNC,
+                Kind::ExprAsync,
                 None,
                 Some(parent_id),
                 position,
@@ -1390,7 +1390,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Await(await_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_AWAIT,
+                Kind::ExprAwait,
                 None,
                 Some(parent_id),
                 position,
@@ -1402,7 +1402,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Try(try_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_TRY,
+                Kind::ExprTry,
                 None,
                 Some(parent_id),
                 position,
@@ -1414,7 +1414,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Unsafe(unsafe_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_UNSAFE,
+                Kind::ExprUnsafe,
                 None,
                 Some(parent_id),
                 position,
@@ -1426,7 +1426,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Const(const_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_CONST,
+                Kind::ExprConst,
                 None,
                 Some(parent_id),
                 position,
@@ -1441,7 +1441,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Repeat(repeat) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_REPEAT,
+                Kind::ExprRepeat,
                 None,
                 Some(parent_id),
                 position,
@@ -1455,7 +1455,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         syn::Expr::Macro(mac) => {
             let mac_path = &mac.mac.path;
             ctx.new_node(
-                kinds::MACRO_CALL,
+                Kind::MacroCall,
                 Some(to_token_string(mac_path)),
                 Some(parent_id),
                 position,
@@ -1466,7 +1466,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         syn::Expr::Yield(yield_expr) => {
             let node_id = ctx.new_node(
-                kinds::EXPR_YIELD,
+                Kind::ExprYield,
                 None,
                 Some(parent_id),
                 position,
@@ -1480,7 +1480,7 @@ fn walk_expr(ctx: &mut WalkCtx, expr: &syn::Expr, parent_id: &str, position: i32
         }
         _ => {
             ctx.new_node(
-                kinds::EXPR_OTHER,
+                Kind::ExprOther,
                 None,
                 Some(parent_id),
                 position,
@@ -1504,7 +1504,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
                 meta.insert("mutable".into(), json!(true));
             }
             let node_id = ctx.new_node(
-                kinds::PAT_IDENT,
+                Kind::PatIdent,
                 Some(name),
                 Some(parent_id),
                 position,
@@ -1519,7 +1519,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         syn::Pat::Struct(pat_struct) => {
             let path = &pat_struct.path;
             let node_id = ctx.new_node(
-                kinds::PAT_STRUCT,
+                Kind::PatStruct,
                 Some(to_token_string(path)),
                 Some(parent_id),
                 position,
@@ -1530,7 +1530,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
             for (i, fp) in pat_struct.fields.iter().enumerate() {
                 let member = &fp.member;
                 let field_id = ctx.new_node(
-                    kinds::FIELD,
+                    Kind::Field,
                     Some(to_token_string(member)),
                     Some(&node_id),
                     i as i32,
@@ -1544,7 +1544,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         syn::Pat::TupleStruct(pat_ts) => {
             let path = &pat_ts.path;
             let node_id = ctx.new_node(
-                kinds::PAT_TUPLE_STRUCT,
+                Kind::PatTupleStruct,
                 Some(to_token_string(path)),
                 Some(parent_id),
                 position,
@@ -1558,7 +1558,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         syn::Pat::Tuple(pat_tuple) => {
             let node_id = ctx.new_node(
-                kinds::PAT_TUPLE,
+                Kind::PatTuple,
                 None,
                 Some(parent_id),
                 position,
@@ -1572,7 +1572,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         syn::Pat::Or(pat_or) => {
             let node_id = ctx.new_node(
-                kinds::PAT_OR,
+                Kind::PatOr,
                 None,
                 Some(parent_id),
                 position,
@@ -1586,7 +1586,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         syn::Pat::Slice(pat_slice) => {
             let node_id = ctx.new_node(
-                kinds::PAT_SLICE,
+                Kind::PatSlice,
                 None,
                 Some(parent_id),
                 position,
@@ -1600,7 +1600,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         syn::Pat::Rest(_) => {
             ctx.new_node(
-                kinds::PAT_REST,
+                Kind::PatRest,
                 Some("..".to_string()),
                 Some(parent_id),
                 position,
@@ -1611,7 +1611,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         syn::Pat::Wild(_) => {
             ctx.new_node(
-                kinds::PAT_WILD,
+                Kind::PatWild,
                 Some("_".to_string()),
                 Some(parent_id),
                 position,
@@ -1622,7 +1622,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         syn::Pat::Reference(pat_ref) => {
             let node_id = ctx.new_node(
-                kinds::PAT_REF,
+                Kind::PatRef,
                 None,
                 Some(parent_id),
                 position,
@@ -1635,7 +1635,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         syn::Pat::Path(pat_path) => {
             let path = &pat_path.path;
             ctx.new_node(
-                kinds::PAT_PATH,
+                Kind::PatPath,
                 Some(to_token_string(path)),
                 Some(parent_id),
                 position,
@@ -1649,7 +1649,7 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
         }
         _ => {
             ctx.new_node(
-                kinds::PAT_OTHER,
+                Kind::PatOther,
                 None,
                 Some(parent_id),
                 position,
@@ -1663,17 +1663,17 @@ fn walk_pat(ctx: &mut WalkCtx, pat: &syn::Pat, parent_id: &str, position: i32) {
 
 fn walk_type(ctx: &mut WalkCtx, ty: &syn::Type, parent_id: &str, position: i32) {
     let kind = match ty {
-        syn::Type::Path(_) => kinds::TYPE_PATH,
-        syn::Type::Reference(_) => kinds::TYPE_REFERENCE,
-        syn::Type::Tuple(_) => kinds::TYPE_TUPLE,
-        syn::Type::Array(_) => kinds::TYPE_ARRAY,
-        syn::Type::Slice(_) => kinds::TYPE_SLICE,
-        syn::Type::BareFn(_) => kinds::TYPE_FN,
-        syn::Type::ImplTrait(_) => kinds::TYPE_IMPL_TRAIT,
-        syn::Type::TraitObject(_) => kinds::TYPE_DYN_TRAIT,
-        syn::Type::Never(_) => kinds::TYPE_NEVER,
-        syn::Type::Infer(_) => kinds::TYPE_INFER,
-        _ => kinds::TYPE_OTHER,
+        syn::Type::Path(_) => Kind::TypePath,
+        syn::Type::Reference(_) => Kind::TypeReference,
+        syn::Type::Tuple(_) => Kind::TypeTuple,
+        syn::Type::Array(_) => Kind::TypeArray,
+        syn::Type::Slice(_) => Kind::TypeSlice,
+        syn::Type::BareFn(_) => Kind::TypeFn,
+        syn::Type::ImplTrait(_) => Kind::TypeImplTrait,
+        syn::Type::TraitObject(_) => Kind::TypeDynTrait,
+        syn::Type::Never(_) => Kind::TypeNever,
+        syn::Type::Infer(_) => Kind::TypeInfer,
+        _ => Kind::TypeOther,
     };
 
     ctx.new_node(
