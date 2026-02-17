@@ -46,6 +46,7 @@ impl CWalkCtx {
         id
     }
 
+    #[allow(dead_code)]
     fn new_edge(&mut self, source_id: &str, target_id: &str, relation: &str) {
         self.edges.push(EdgeRow {
             id: Uuid::new_v4().to_string(),
@@ -625,8 +626,8 @@ fn collect_string_spans_recursive(
 ) {
     match node.kind() {
         "string_literal" | "char_literal" | "concatenated_string" => {
-            let start_line = (node.start_position().row + 1) as usize;
-            let end_line = (node.end_position().row + 1) as usize;
+            let start_line = node.start_position().row + 1;
+            let end_line = node.end_position().row + 1;
             spans.push((start_line, end_line));
         }
         _ => {}

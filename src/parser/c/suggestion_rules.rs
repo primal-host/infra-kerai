@@ -1,5 +1,4 @@
 /// C-specific suggestion rules — detect code patterns that merit advisory comments.
-
 use super::kinds;
 
 /// A suggestion finding from a C rule.
@@ -22,6 +21,7 @@ pub struct CNodeInfo {
     pub span_start: Option<i32>,
     pub span_end: Option<i32>,
     pub is_static: bool,
+    #[allow(dead_code)]
     pub has_doc: bool,
     pub params: Option<String>,
     pub is_header: bool,

@@ -1,6 +1,5 @@
 /// C AST node kind constants, prefixed with `c_` to avoid collisions
 /// with Rust and Go kinds in the `kerai.nodes.kind` column.
-
 // Preprocessor
 pub const C_INCLUDE: &str = "c_include";
 pub const C_DEFINE: &str = "c_define";
