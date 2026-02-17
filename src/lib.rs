@@ -3385,6 +3385,187 @@ impl Config {
         }
     }
 
+    // --- Comment handling tests ---
+
+    #[pg_test]
+    fn test_comment_grouping() {
+        // 3 consecutive // lines should become 1 comment_block node
+        let source = "// line one\n// line two\n// line three\nfn foo() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_grouping.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let block_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.nodes WHERE kind = 'comment_block'",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(block_count, 1, "3 consecutive // lines should be 1 comment_block");
+
+        // Verify it has 3 lines in content (newline-separated)
+        let content = Spi::get_one::<String>(
+            "SELECT content FROM kerai.nodes WHERE kind = 'comment_block' LIMIT 1",
+        )
+        .unwrap()
+        .unwrap();
+        let line_count = content.split('\n').count();
+        assert_eq!(line_count, 3, "comment_block should have 3 lines");
+    }
+
+    #[pg_test]
+    fn test_comment_placement_above() {
+        let source = "// helper\nfn foo() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_above.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let placement = Spi::get_one::<String>(
+            "SELECT metadata->>'placement' FROM kerai.nodes WHERE kind = 'comment' \
+             AND content = 'helper' LIMIT 1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(placement, "above", "Comment directly above fn should be placement=above");
+
+        // Should have a documents edge
+        let edge_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.edges e \
+             JOIN kerai.nodes n ON e.source_id = n.id \
+             WHERE n.kind = 'comment' AND n.content = 'helper' \
+             AND e.relation = 'documents'",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(edge_count, 1, "Above comment should have documents edge");
+    }
+
+    #[pg_test]
+    fn test_comment_placement_eof() {
+        let source = "fn foo() {}\n// trailing at end\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_eof.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let placement = Spi::get_one::<String>(
+            "SELECT metadata->>'placement' FROM kerai.nodes WHERE kind = 'comment' \
+             AND content = 'trailing at end' LIMIT 1",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(placement, "eof", "Comment at end with no following AST node should be eof");
+
+        // Eof comments should have NO documents edge
+        let edge_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.edges e \
+             JOIN kerai.nodes n ON e.source_id = n.id \
+             WHERE n.kind = 'comment' AND n.content = 'trailing at end' \
+             AND e.relation = 'documents'",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(edge_count, 0, "Eof comment should have no documents edge");
+    }
+
+    #[pg_test]
+    fn test_comment_not_in_string() {
+        // The // is inside a string literal on a single line — should not be extracted
+        let source = "fn foo() { let s = \"// not a comment\"; }\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_string.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let comment_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.nodes \
+             WHERE kind IN ('comment', 'comment_block') \
+             AND content LIKE '%not a comment%'",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(comment_count, 0, "// inside string literal should not be extracted");
+    }
+
+    #[pg_test]
+    fn test_normalization_crlf() {
+        // CRLF source should parse correctly after normalization
+        let source = "fn hello() {\r\n    let x = 1;\r\n}\r\n";
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.parse_source('{}', 'test_crlf.rs')",
+            sql_escape(source),
+        ))
+        .unwrap()
+        .unwrap();
+        let obj = result.0.as_object().unwrap();
+        let node_count = obj["nodes"].as_u64().unwrap();
+        assert!(node_count > 0, "CRLF source should parse successfully");
+
+        let fn_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.nodes WHERE kind = 'fn' AND content = 'hello'",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(fn_count, 1, "Should find fn hello after CRLF normalization");
+    }
+
+    #[pg_test]
+    fn test_normalization_blank_lines() {
+        // Multiple blank lines between fns should be collapsed
+        let source = "fn a() {}\n\n\n\n\nfn b() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_blanks.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        // Both fns should be parsed
+        let fn_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.nodes WHERE kind = 'fn'",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(fn_count, 2, "Both fns should be parsed after blank line collapse");
+    }
+
+    #[pg_test]
+    fn test_roundtrip_with_comments() {
+        let source = "// above comment\nfn foo() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_rt_comments.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes WHERE kind = 'file' AND content = 'test_rt_comments.rs'",
+        )
+        .unwrap()
+        .unwrap();
+
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_file('{}'::uuid)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            reconstructed.contains("// above comment"),
+            "Reconstructed source should contain the above comment, got: {}",
+            reconstructed,
+        );
+        assert!(
+            reconstructed.contains("fn foo()"),
+            "Reconstructed source should contain fn foo()",
+        );
+    }
+
     /// sql_escape helper for tests
     fn sql_escape(s: &str) -> String {
         s.replace('\'', "''")
