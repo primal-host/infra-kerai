@@ -22,6 +22,10 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 │  └─ 11 External Economy ←── 05 + 10
 │
 │  12 Knowledge Editor ←──── 01 + 02 + 04 + 06 + 08
+│
+│  13 MicroGPT ←─────────── 01
+│  14 Native Currency ←──── 01
+│  15 Comment Handling ←─── 02 + 03
 ```
 
 | Plan | Title | Depends On | Delivers |
@@ -38,6 +42,9 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 | [10](10-zk-marketplace.md) | ZK Marketplace | 06, 08 | Zero-knowledge proofs, Dutch auctions, simultaneous release, open-source floor |
 | [11](11-external-economy.md) | External Economy | 05, 10 | Wallets, token bridge, exchange listing, bounties, fiat on/off ramps |
 | [12](12-kerai-web.md) | Knowledge Editor | 01, 02, 04, 06, 08 | Web-based editor, document parsers, AI-assisted writing, corpus ingestion, real-time collaboration |
+| [13](13-microgpt.md) | MicroGPT | 01 | Tiny transformer model running inside Postgres for local inference |
+| [14](14-native-currency.md) | Native Currency | 01 | Kōi token minting, wallets, transfers, reward schedules |
+| [15](15-comment-handling.md) | Comment Handling | 02, 03 | Source normalizer, comment grouping, placement classification, string-literal exclusion, comment-preserving reconstruction |
 
 ## Design Principles
 
