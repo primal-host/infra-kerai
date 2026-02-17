@@ -260,8 +260,8 @@ ProseMirror is document-model-first — it defines a schema of node types and th
 services:
   kerai-web:
     build: .
-    image: primal-host-infra-kerai-web
-    container_name: infra-kerai-web
+    image: primal-host-kerai-web
+    container_name: kerai-web
     environment:
       DATABASE_URL: postgres://postgres:password@host.docker.internal:5432/kerai
     networks:
@@ -272,7 +272,7 @@ services:
       - "traefik.http.routers.kerai-web.tls.certresolver=letsencrypt"
 ```
 
-Follows the naming conventions from CLAUDE.md: image `primal-host-infra-kerai-web`, container `infra-kerai-web`.
+Follows the naming conventions from CLAUDE.md: image `primal-host-kerai-web`, container `kerai-web`.
 
 ## Decisions to Make
 

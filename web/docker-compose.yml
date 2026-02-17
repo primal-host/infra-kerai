@@ -1,7 +1,7 @@
 services:
   kerai-web:
-    image: primal-host-infra-kerai-web
-    container_name: infra-kerai-web
+    image: primal-host-kerai-web
+    container_name: kerai-web
     build:
       context: ..
       dockerfile: web/Dockerfile
