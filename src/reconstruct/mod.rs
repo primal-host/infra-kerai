@@ -1,10 +1,11 @@
-/// Reconstruct module — kerai.nodes → Rust source text.
+/// Reconstruct module — kerai.nodes → source text.
 use pgrx::prelude::*;
 use serde_json::json;
 
 mod assembler;
 mod derive_orderer;
 mod formatter;
+mod go;
 mod import_sorter;
 mod markdown;
 
