@@ -5,18 +5,21 @@ pub mod cursor;
 /// Supported tree-sitter languages.
 pub enum TsLanguage {
     Go,
+    C,
 }
 
 impl TsLanguage {
     pub fn ts_language(&self) -> tree_sitter::Language {
         match self {
             TsLanguage::Go => tree_sitter_go::LANGUAGE.into(),
+            TsLanguage::C => tree_sitter_c::LANGUAGE.into(),
         }
     }
 
     pub fn name(&self) -> &'static str {
         match self {
             TsLanguage::Go => "go",
+            TsLanguage::C => "c",
         }
     }
 }
