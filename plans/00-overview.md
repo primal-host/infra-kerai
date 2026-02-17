@@ -26,6 +26,7 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 │  13 MicroGPT ←─────────── 01
 │  14 Native Currency ←──── 01
 │  15 Comment Handling ←─── 02 + 03
+│  16 Reconstruction Intelligence ← 02 + 03 + 15
 ```
 
 | Plan | Title | Depends On | Delivers |
@@ -45,6 +46,7 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 | [13](13-microgpt.md) | MicroGPT | 01 | Tiny transformer model running inside Postgres for local inference |
 | [14](14-native-currency.md) | Native Currency | 01 | Kōi token minting, wallets, transfers, reward schedules |
 | [15](15-comment-handling.md) | Comment Handling | 02, 03 | Source normalizer, comment grouping, placement classification, string-literal exclusion, comment-preserving reconstruction |
+| [16](16-reconstruction-intelligence.md) | Reconstruction Intelligence | 02, 03, 15 | Import sorting, derive ordering, inline `// kerai:` suggestions with dismissal tracking |
 
 ## Design Principles
 
