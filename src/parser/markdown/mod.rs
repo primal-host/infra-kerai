@@ -62,33 +62,7 @@ fn parse_markdown(source: &str, filename: &str) -> pgrx::JsonB {
     delete_markdown_nodes(&instance_id, filename);
     inserter::delete_file_nodes(&instance_id, filename);
 
-    let path_ctx = PathContext::with_root(filename);
-
-    // Create document root node
-    let doc_node_id = Uuid::new_v4().to_string();
-    let doc_node = NodeRow {
-        id: doc_node_id.clone(),
-        instance_id: instance_id.clone(),
-        kind: kinds::DOCUMENT.to_string(),
-        language: Some("markdown".to_string()),
-        content: Some(filename.to_string()),
-        parent_id: None,
-        position: 0,
-        path: path_ctx.path(),
-        metadata: json!({"line_count": source.lines().count()}),
-        span_start: None,
-        span_end: None,
-    };
-    inserter::insert_nodes(&[doc_node]);
-
-    // Walk markdown and collect nodes/edges
-    let (nodes, edges) = walker::walk_markdown(source, filename, &instance_id, &doc_node_id);
-
-    let node_count = nodes.len() + 1; // +1 for document node
-    let edge_count = edges.len();
-
-    inserter::insert_nodes(&nodes);
-    inserter::insert_edges(&edges);
+    let (node_count, edge_count) = parse_markdown_single(source, filename, &instance_id, None);
 
     // Auto-mint reward for markdown parsing
     if node_count > 0 {
@@ -107,4 +81,44 @@ fn parse_markdown(source: &str, filename: &str) -> pgrx::JsonB {
         "edges": edge_count,
         "elapsed_ms": elapsed.as_millis() as u64,
     }))
+}
+
+/// Parse markdown source, insert nodes/edges, return counts.
+///
+/// `parent_id` allows parenting the document node under a repo directory node.
+pub(crate) fn parse_markdown_single(
+    source: &str,
+    filename: &str,
+    instance_id: &str,
+    parent_id: Option<&str>,
+) -> (usize, usize) {
+    let path_ctx = PathContext::with_root(filename);
+
+    // Create document root node
+    let doc_node_id = Uuid::new_v4().to_string();
+    let doc_node = NodeRow {
+        id: doc_node_id.clone(),
+        instance_id: instance_id.to_string(),
+        kind: kinds::DOCUMENT.to_string(),
+        language: Some("markdown".to_string()),
+        content: Some(filename.to_string()),
+        parent_id: parent_id.map(|s| s.to_string()),
+        position: 0,
+        path: path_ctx.path(),
+        metadata: json!({"line_count": source.lines().count()}),
+        span_start: None,
+        span_end: None,
+    };
+    inserter::insert_nodes(&[doc_node]);
+
+    // Walk markdown and collect nodes/edges
+    let (nodes, edges) = walker::walk_markdown(source, filename, instance_id, &doc_node_id);
+
+    let node_count = nodes.len() + 1; // +1 for document node
+    let edge_count = edges.len();
+
+    inserter::insert_nodes(&nodes);
+    inserter::insert_edges(&edges);
+
+    (node_count, edge_count)
 }

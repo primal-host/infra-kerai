@@ -30,7 +30,7 @@ fn parse_c_source(source: &str, filename: &str) -> pgrx::JsonB {
     // Delete existing nodes for this filename (idempotent re-parse)
     inserter::delete_file_nodes(&instance_id, filename);
 
-    let (node_count, edge_count) = parse_c_single(source, filename, &instance_id);
+    let (node_count, edge_count) = parse_c_single(source, filename, &instance_id, None);
 
     // Auto-mint reward
     if node_count > 0 {
@@ -76,7 +76,7 @@ fn parse_c_file(path: &str) -> pgrx::JsonB {
     // Delete existing nodes for this file (idempotent re-parse)
     inserter::delete_file_nodes(&instance_id, &filename);
 
-    let (node_count, edge_count) = parse_c_single(&source, &filename, &instance_id);
+    let (node_count, edge_count) = parse_c_single(&source, &filename, &instance_id, None);
 
     // Auto-mint reward
     if node_count > 0 {
@@ -98,8 +98,15 @@ fn parse_c_file(path: &str) -> pgrx::JsonB {
     }))
 }
 
-/// Internal: parse C source, insert nodes/edges, return counts.
-fn parse_c_single(source: &str, filename: &str, instance_id: &str) -> (usize, usize) {
+/// Parse C source, insert nodes/edges, return counts.
+///
+/// `parent_id` allows parenting the file node under a repo directory node.
+pub(crate) fn parse_c_single(
+    source: &str,
+    filename: &str,
+    instance_id: &str,
+    parent_id: Option<&str>,
+) -> (usize, usize) {
     // 1. Normalize source
     let normalized = normalizer::normalize(source);
 
@@ -122,7 +129,7 @@ fn parse_c_single(source: &str, filename: &str, instance_id: &str) -> (usize, us
         kind: Kind::File.as_str().to_string(),
         language: Some("c".to_string()),
         content: Some(filename.to_string()),
-        parent_id: None,
+        parent_id: parent_id.map(|s| s.to_string()),
         position: 0,
         path: path_ctx.path(),
         metadata: json!({"line_count": normalized.lines().count()}),
