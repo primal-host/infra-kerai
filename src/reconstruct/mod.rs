@@ -3,14 +3,50 @@ use pgrx::prelude::*;
 use serde_json::json;
 
 mod assembler;
+mod derive_orderer;
 mod formatter;
+mod import_sorter;
 mod markdown;
+
+use assembler::AssemblyOptions;
+
+/// Parse reconstruction options from a JSONB parameter.
+fn parse_options(options: Option<pgrx::JsonB>) -> AssemblyOptions {
+    let mut opts = AssemblyOptions::default();
+    if let Some(pgrx::JsonB(ref val)) = options {
+        if let Some(v) = val.get("sort_imports").and_then(|v| v.as_bool()) {
+            opts.sort_imports = v;
+        }
+        if let Some(v) = val.get("order_derives").and_then(|v| v.as_bool()) {
+            opts.order_derives = v;
+        }
+        if let Some(v) = val.get("suggestions").and_then(|v| v.as_bool()) {
+            opts.suggestions = v;
+        }
+    }
+    opts
+}
 
 /// Reconstruct a Rust source file from its stored AST nodes.
 /// Takes the UUID of a file-kind node and returns formatted Rust source.
 #[pg_extern]
 fn reconstruct_file(file_node_id: pgrx::Uuid) -> String {
+    reconstruct_file_with_options(file_node_id, None)
+}
+
+/// Reconstruct a Rust source file with explicit options.
+///
+/// Options JSON keys (all boolean, default true):
+/// - sort_imports: canonical import ordering (std → external → crate)
+/// - order_derives: alphabetical #[derive(...)] normalization
+/// - suggestions: emit // kerai: advisory comments
+#[pg_extern]
+fn reconstruct_file_with_options(
+    file_node_id: pgrx::Uuid,
+    options: Option<pgrx::JsonB>,
+) -> String {
     let id_str = file_node_id.to_string();
+    let opts = parse_options(options);
 
     // Validate that the node exists and is a file node
     let kind = Spi::get_one::<String>(&format!(
@@ -28,13 +64,24 @@ fn reconstruct_file(file_node_id: pgrx::Uuid) -> String {
         );
     }
 
-    let raw = assembler::assemble_file(&id_str);
+    let raw = assembler::assemble_file_with_options(&id_str, &opts);
     formatter::format_source(&raw)
 }
 
 /// Reconstruct all files in a crate, returning a JSON map of {filename: source}.
 #[pg_extern]
 fn reconstruct_crate(crate_name: &str) -> pgrx::JsonB {
+    reconstruct_crate_with_options(crate_name, None)
+}
+
+/// Reconstruct all files in a crate with explicit options.
+#[pg_extern]
+fn reconstruct_crate_with_options(
+    crate_name: &str,
+    options: Option<pgrx::JsonB>,
+) -> pgrx::JsonB {
+    let opts = parse_options(options);
+
     // Find the crate node
     let crate_node_id = Spi::get_one::<String>(&format!(
         "SELECT id::text FROM kerai.nodes \
@@ -60,7 +107,7 @@ fn reconstruct_crate(crate_name: &str) -> pgrx::JsonB {
             let file_id: String = row.get_by_name::<String, _>("id").unwrap().unwrap_or_default();
             let filename: String = row.get_by_name::<String, _>("content").unwrap().unwrap_or_default();
 
-            let raw = assembler::assemble_file(&file_id);
+            let raw = assembler::assemble_file_with_options(&file_id, &opts);
             let formatted = formatter::format_source(&raw);
             files.insert(filename, json!(formatted));
         }
