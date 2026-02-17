@@ -35,6 +35,7 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
     let flags = query_file_flags(file_node_id);
     let sort_imports = options.sort_imports && !flags.skip_sort_imports && !flags.skip_all;
     let order_derives = options.order_derives && !flags.skip_order_derives && !flags.skip_all;
+    let emit_suggestions = options.suggestions && !flags.skip_suggestions && !flags.skip_all;
 
     let mut parts: Vec<String> = Vec::new();
 
@@ -50,6 +51,13 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
     if !inner_docs.is_empty() {
         parts.push(String::new());
     }
+
+    // Collect suggestions keyed by target node ID
+    let suggestion_map = if emit_suggestions {
+        query_suggestions(file_node_id)
+    } else {
+        std::collections::HashMap::new()
+    };
 
     // Collect all direct children ordered by position
     let items = query_child_items(file_node_id);
@@ -75,7 +83,6 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
                 continue; // already emitted
             }
             if is_comment_kind(&item.kind, comment_str, comment_block_str) {
-                // Check if this comment was consumed as "above a use" — skip if so
                 if item.consumed_by_import_sort {
                     continue;
                 }
@@ -89,6 +96,8 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
                 continue;
             }
 
+            // Emit suggestions above this item
+            emit_suggestions_for_item(&mut parts, &item.id, &suggestion_map);
             emit_item(&mut parts, item, order_derives, &direct_comment_ids);
         }
     } else {
@@ -105,11 +114,83 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
                 continue;
             }
 
+            // Emit suggestions above this item
+            emit_suggestions_for_item(&mut parts, &item.id, &suggestion_map);
             emit_item(&mut parts, item, order_derives, &direct_comment_ids);
         }
     }
 
     parts.join("\n")
+}
+
+/// A suggestion to emit as a // kerai: comment.
+struct SuggestionForEmit {
+    message: String,
+    rule_id: String,
+}
+
+/// Query active suggestions for a file, grouped by target node ID.
+fn query_suggestions(
+    file_node_id: &str,
+) -> std::collections::HashMap<String, Vec<SuggestionForEmit>> {
+    let mut map: std::collections::HashMap<String, Vec<SuggestionForEmit>> =
+        std::collections::HashMap::new();
+
+    Spi::connect(|client| {
+        let query = format!(
+            "SELECT n.content, n.metadata->>'rule' AS rule, \
+             e.target_id::text AS target_id \
+             FROM kerai.nodes n \
+             JOIN kerai.edges e ON e.source_id = n.id \
+             WHERE n.parent_id = '{}'::uuid \
+             AND n.kind = 'suggestion' \
+             AND n.metadata->>'status' = 'emitted' \
+             AND e.relation = 'suggests' \
+             ORDER BY n.position ASC",
+            file_node_id.replace('\'', "''")
+        );
+
+        let result = client.select(&query, None, &[]).unwrap();
+        for row in result {
+            let message: String = row
+                .get_by_name::<String, _>("content")
+                .unwrap()
+                .unwrap_or_default();
+            let rule: String = row
+                .get_by_name::<String, _>("rule")
+                .unwrap()
+                .unwrap_or_default();
+            let target: String = row
+                .get_by_name::<String, _>("target_id")
+                .unwrap()
+                .unwrap_or_default();
+
+            map.entry(target)
+                .or_default()
+                .push(SuggestionForEmit {
+                    message,
+                    rule_id: rule,
+                });
+        }
+    });
+
+    map
+}
+
+/// Emit `// kerai:` suggestion comments for a target item.
+fn emit_suggestions_for_item(
+    parts: &mut Vec<String>,
+    item_id: &str,
+    suggestion_map: &std::collections::HashMap<String, Vec<SuggestionForEmit>>,
+) {
+    if let Some(suggestions) = suggestion_map.get(item_id) {
+        for suggestion in suggestions {
+            parts.push(format!(
+                "// kerai: {} ({})",
+                suggestion.message, suggestion.rule_id
+            ));
+        }
+    }
 }
 
 /// Emit sorted imports and any comments that were directly above use items.
