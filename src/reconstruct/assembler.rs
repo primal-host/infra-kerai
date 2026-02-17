@@ -2,7 +2,6 @@
 use pgrx::prelude::*;
 
 use crate::parser::kinds::Kind;
-use super::derive_orderer;
 use super::import_sorter::{self, ImportEntry};
 
 /// Options controlling reconstruction intelligence features.
@@ -18,7 +17,7 @@ impl Default for AssemblyOptions {
         Self {
             sort_imports: true,
             order_derives: true,
-            suggestions: true,
+            suggestions: false,
         }
     }
 }
@@ -34,7 +33,6 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
     // Check for kerai flags stored on the file node
     let flags = query_file_flags(file_node_id);
     let sort_imports = options.sort_imports && !flags.skip_sort_imports && !flags.skip_all;
-    let order_derives = options.order_derives && !flags.skip_order_derives && !flags.skip_all;
     let emit_suggestions = options.suggestions && !flags.skip_suggestions && !flags.skip_all;
 
     let mut parts: Vec<String> = Vec::new();
@@ -98,7 +96,7 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
 
             // Emit suggestions above this item
             emit_suggestions_for_item(&mut parts, &item.id, &suggestion_map);
-            emit_item(&mut parts, item, order_derives, &direct_comment_ids);
+            emit_item(&mut parts, item, &direct_comment_ids);
         }
     } else {
         // No import sorting — emit everything in position order
@@ -116,7 +114,7 @@ pub fn assemble_file_with_options(file_node_id: &str, options: &AssemblyOptions)
 
             // Emit suggestions above this item
             emit_suggestions_for_item(&mut parts, &item.id, &suggestion_map);
-            emit_item(&mut parts, item, order_derives, &direct_comment_ids);
+            emit_item(&mut parts, item, &direct_comment_ids);
         }
     }
 
@@ -252,15 +250,10 @@ fn is_comment_kind(kind: &str, comment_str: &str, comment_block_str: &str) -> bo
 fn emit_item(
     parts: &mut Vec<String>,
     item: &ChildItem,
-    order_derives: bool,
     direct_comment_ids: &std::collections::HashSet<String>,
 ) {
     if let Some(ref source) = item.source {
-        let processed = if order_derives {
-            derive_orderer::order_derives(source)
-        } else {
-            source.clone()
-        };
+        let processed = source.clone();
 
         // Check for trailing comments
         let trailing = query_trailing_comments(&item.id, direct_comment_ids);
@@ -319,14 +312,14 @@ fn emit_comment(parts: &mut Vec<String>, content: &str, style: &str) {
 }
 
 /// Flags parsed from file node metadata (set during parsing from // kerai: comments).
-struct FileFlags {
-    skip_sort_imports: bool,
-    skip_order_derives: bool,
-    skip_suggestions: bool,
-    skip_all: bool,
+pub struct FileFlags {
+    pub skip_sort_imports: bool,
+    pub skip_order_derives: bool,
+    pub skip_suggestions: bool,
+    pub skip_all: bool,
 }
 
-fn query_file_flags(file_node_id: &str) -> FileFlags {
+pub fn query_file_flags(file_node_id: &str) -> FileFlags {
     let mut flags = FileFlags {
         skip_sort_imports: false,
         skip_order_derives: false,

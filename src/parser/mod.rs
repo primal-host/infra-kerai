@@ -477,7 +477,7 @@ fn query_dismissed_suggestions(file_node_id: &str, _instance_id: &str) -> std::c
 
     Spi::connect(|client| {
         let query = format!(
-            "SELECT metadata->>'rule' AS rule, \
+            "SELECT n.metadata->>'rule' AS rule, \
              e.target_id::text AS target_id \
              FROM kerai.nodes n \
              JOIN kerai.edges e ON e.source_id = n.id \

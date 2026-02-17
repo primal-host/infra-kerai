@@ -8,7 +8,7 @@ mod formatter;
 mod import_sorter;
 mod markdown;
 
-use assembler::AssemblyOptions;
+use assembler::{AssemblyOptions, query_file_flags};
 
 /// Parse reconstruction options from a JSONB parameter.
 fn parse_options(options: Option<pgrx::JsonB>) -> AssemblyOptions {
@@ -64,8 +64,18 @@ fn reconstruct_file_with_options(
         );
     }
 
+    let flags = query_file_flags(&id_str);
     let raw = assembler::assemble_file_with_options(&id_str, &opts);
-    formatter::format_source(&raw)
+    let formatted = formatter::format_source(&raw);
+
+    // Apply derive ordering after formatting (quote::ToTokens uses spaced syntax
+    // that doesn't match #[derive(...)], so we must order after prettyplease normalizes)
+    let order = opts.order_derives && !flags.skip_order_derives && !flags.skip_all;
+    if order {
+        derive_orderer::order_derives(&formatted)
+    } else {
+        formatted
+    }
 }
 
 /// Reconstruct all files in a crate, returning a JSON map of {filename: source}.
@@ -107,9 +117,16 @@ fn reconstruct_crate_with_options(
             let file_id: String = row.get_by_name::<String, _>("id").unwrap().unwrap_or_default();
             let filename: String = row.get_by_name::<String, _>("content").unwrap().unwrap_or_default();
 
+            let file_flags = query_file_flags(&file_id);
             let raw = assembler::assemble_file_with_options(&file_id, &opts);
             let formatted = formatter::format_source(&raw);
-            files.insert(filename, json!(formatted));
+            let order = opts.order_derives && !file_flags.skip_order_derives && !file_flags.skip_all;
+            let final_source = if order {
+                derive_orderer::order_derives(&formatted)
+            } else {
+                formatted
+            };
+            files.insert(filename, json!(final_source));
         }
     });
 

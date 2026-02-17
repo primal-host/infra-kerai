@@ -460,7 +460,7 @@ impl Foo {
     #[pg_test]
     fn test_reconstruct_roundtrip_struct() {
         assert_roundtrip(
-            "#[derive(Debug, Clone)]\nstruct Point {\n    x: f64,\n    y: f64,\n}",
+            "#[derive(Clone, Debug)]\nstruct Point {\n    x: f64,\n    y: f64,\n}",
             "recon_struct.rs",
         );
     }
@@ -3565,6 +3565,209 @@ impl Config {
             reconstructed.contains("fn foo()"),
             "Reconstructed source should contain fn foo()",
         );
+    }
+
+    // --- Plan 16: Reconstruction Intelligence tests ---
+
+    #[pg_test]
+    fn test_import_sorting_in_reconstruction() {
+        // Source with imports in wrong order
+        let source = "use crate::foo;\nuse std::io;\nuse serde::Deserialize;\nfn bar() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_import_sort.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes WHERE kind = 'file' AND content = 'test_import_sort.rs'",
+        )
+        .unwrap()
+        .unwrap();
+
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_file('{}'::uuid)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        // std should come before serde, serde before crate::
+        let std_pos = reconstructed.find("std::io").expect("should contain std::io");
+        let serde_pos = reconstructed.find("serde").expect("should contain serde");
+        let crate_pos = reconstructed.find("crate::foo").expect("should contain crate::foo");
+        assert!(
+            std_pos < serde_pos && serde_pos < crate_pos,
+            "Imports should be sorted: std < external < crate, got:\n{}",
+            reconstructed,
+        );
+    }
+
+    #[pg_test]
+    fn test_derive_ordering_in_reconstruction() {
+        let source = "#[derive(Serialize, Clone, Debug)]\nstruct Foo { x: i32 }\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_derive_order.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes WHERE kind = 'file' AND content = 'test_derive_order.rs'",
+        )
+        .unwrap()
+        .unwrap();
+
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_file('{}'::uuid)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        // Derives should be alphabetically sorted
+        assert!(
+            reconstructed.contains("Clone, Debug, Serialize")
+                || reconstructed.contains("Clone , Debug , Serialize"),
+            "Derives should be alphabetically sorted, got:\n{}",
+            reconstructed,
+        );
+    }
+
+    #[pg_test]
+    fn test_suggestion_created_for_string_param() {
+        let source = "fn process(s: &String) {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_suggest_str.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        // Check that a suggestion node was created
+        let suggestion_count = Spi::get_one::<i64>(
+            "SELECT count(*)::bigint FROM kerai.nodes \
+             WHERE kind = 'suggestion' AND metadata->>'rule' = 'prefer_str_slice'",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            suggestion_count > 0,
+            "Should create a prefer_str_slice suggestion for &String param",
+        );
+    }
+
+    #[pg_test]
+    fn test_suggestion_emitted_in_reconstruction() {
+        let source = "fn process(s: &String) {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_suggest_emit.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes WHERE kind = 'file' AND content = 'test_suggest_emit.rs'",
+        )
+        .unwrap()
+        .unwrap();
+
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_file_with_options('{}'::uuid, '{{\"suggestions\": true}}'::jsonb)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            reconstructed.contains("// kerai:") && reconstructed.contains("prefer_str_slice"),
+            "Reconstructed source should contain kerai suggestion comment, got:\n{}",
+            reconstructed,
+        );
+    }
+
+    #[pg_test]
+    fn test_suggestion_not_emitted_with_skip_flag() {
+        let source = "fn process(s: &String) {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_suggest_skip.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes WHERE kind = 'file' AND content = 'test_suggest_skip.rs'",
+        )
+        .unwrap()
+        .unwrap();
+
+        // Reconstruct with suggestions disabled
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_file_with_options('{}'::uuid, '{{\"suggestions\": false}}'::jsonb)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            !reconstructed.contains("// kerai:"),
+            "Reconstructed source should NOT contain kerai suggestion when disabled, got:\n{}",
+            reconstructed,
+        );
+    }
+
+    #[pg_test]
+    fn test_reconstruct_with_options_no_sorting() {
+        let source = "use crate::foo;\nuse std::io;\nfn bar() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_no_sort.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes WHERE kind = 'file' AND content = 'test_no_sort.rs'",
+        )
+        .unwrap()
+        .unwrap();
+
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_file_with_options('{}'::uuid, '{{\"sort_imports\": false, \"suggestions\": false}}'::jsonb)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        // Without sorting, crate:: should appear before std:: (original order)
+        let crate_pos = reconstructed.find("crate::foo");
+        let std_pos = reconstructed.find("std::io");
+        if let (Some(c), Some(s)) = (crate_pos, std_pos) {
+            assert!(
+                c < s,
+                "Without sorting, imports should stay in original order, got:\n{}",
+                reconstructed,
+            );
+        }
+    }
+
+    #[pg_test]
+    fn test_kerai_skip_flag_parsed() {
+        let source = "// kerai:skip-sort-imports\nuse crate::foo;\nuse std::io;\nfn bar() {}\n";
+        Spi::run(&format!(
+            "SELECT kerai.parse_source('{}', 'test_skip_flag.rs')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        // Check that the flag is stored in the file node metadata
+        let has_flag = Spi::get_one::<bool>(
+            "SELECT (metadata->'kerai_flags'->>'skip-sort-imports')::boolean \
+             FROM kerai.nodes WHERE kind = 'file' AND content = 'test_skip_flag.rs'",
+        )
+        .unwrap()
+        .unwrap_or(false);
+
+        assert!(has_flag, "File node should have kerai_flags.skip-sort-imports = true");
     }
 
     /// sql_escape helper for tests
