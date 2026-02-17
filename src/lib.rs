@@ -3770,6 +3770,246 @@ impl Config {
         assert!(has_flag, "File node should have kerai_flags.skip-sort-imports = true");
     }
 
+    // ── Go parser tests ──────────────────────────────────────────────────
+
+    #[pg_test]
+    fn test_parse_go_source_basic() {
+        let source = r#"package main
+
+import "fmt"
+
+func main() {
+    fmt.Println("hello")
+}
+"#;
+        let result = Spi::get_one::<pgrx::JsonB>(&format!(
+            "SELECT kerai.parse_go_source('{}', 'hello.go')",
+            sql_escape(source),
+        ))
+        .unwrap()
+        .unwrap();
+
+        let nodes = result.0.get("nodes").and_then(|v| v.as_u64()).unwrap_or(0);
+        assert!(nodes > 0, "parse_go_source should produce nodes, got {}", nodes);
+    }
+
+    #[pg_test]
+    fn test_go_func_node_kind() {
+        let source = r#"package main
+
+func Hello() {}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'func_kind.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let count = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.nodes WHERE kind = 'go_func' AND content = 'Hello'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+
+        assert_eq!(count, 1, "Should have one go_func node named Hello");
+    }
+
+    #[pg_test]
+    fn test_go_exported_metadata() {
+        let source = r#"package main
+
+func Exported() {}
+func unexported() {}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'export_test.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let exported = Spi::get_one::<bool>(
+            "SELECT (metadata->>'exported')::boolean FROM kerai.nodes \
+             WHERE kind = 'go_func' AND content = 'Exported'",
+        )
+        .unwrap()
+        .unwrap_or(false);
+        assert!(exported, "Exported function should have exported=true");
+
+        let unexported = Spi::get_one::<bool>(
+            "SELECT (metadata->>'exported')::boolean FROM kerai.nodes \
+             WHERE kind = 'go_func' AND content = 'unexported'",
+        )
+        .unwrap()
+        .unwrap_or(true);
+        assert!(!unexported, "unexported function should have exported=false");
+    }
+
+    #[pg_test]
+    fn test_go_struct_fields() {
+        let source = r#"package main
+
+type User struct {
+    Name  string
+    Email string
+    Age   int
+}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'struct_test.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let field_count = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.nodes WHERE kind = 'go_field' \
+             AND language = 'go'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+
+        assert_eq!(field_count, 3, "Struct should have 3 fields, got {}", field_count);
+    }
+
+    #[pg_test]
+    fn test_go_import_specs() {
+        let source = r#"package main
+
+import (
+    "fmt"
+    "os"
+    "strings"
+)
+
+func main() {}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'import_test.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let import_count = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.nodes WHERE kind = 'go_import_spec'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+
+        assert_eq!(import_count, 3, "Should have 3 import specs, got {}", import_count);
+    }
+
+    #[pg_test]
+    fn test_go_method_receiver() {
+        let source = r#"package main
+
+type Server struct{}
+
+func (s *Server) Start() {}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'method_test.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let has_receiver = Spi::get_one::<bool>(
+            "SELECT (metadata->>'pointer_receiver')::boolean FROM kerai.nodes \
+             WHERE kind = 'go_method' AND content = 'Start'",
+        )
+        .unwrap()
+        .unwrap_or(false);
+
+        assert!(has_receiver, "Method should have pointer_receiver=true");
+    }
+
+    #[pg_test]
+    fn test_go_comment_documents_edge() {
+        let source = r#"package main
+
+// Hello prints a greeting.
+func Hello() {}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'comment_edge.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let doc_edge = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.edges e \
+             JOIN kerai.nodes t ON e.target_id = t.id \
+             WHERE e.relation = 'documents' \
+             AND t.kind = 'go_func' AND t.content = 'Hello'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+
+        assert_eq!(doc_edge, 1, "Comment above Hello should create 'documents' edge");
+    }
+
+    #[pg_test]
+    fn test_go_reconstruct_roundtrip() {
+        let source = r#"package main
+
+import "fmt"
+
+// Hello prints a greeting.
+func Hello(name string) {
+    fmt.Println("Hello, " + name)
+}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'roundtrip.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let file_id = Spi::get_one::<String>(
+            "SELECT id::text FROM kerai.nodes \
+             WHERE kind = 'file' AND content = 'roundtrip.go' AND language = 'go'",
+        )
+        .unwrap()
+        .unwrap();
+
+        let reconstructed = Spi::get_one::<String>(&format!(
+            "SELECT kerai.reconstruct_go_file('{}'::uuid)",
+            sql_escape(&file_id),
+        ))
+        .unwrap()
+        .unwrap();
+
+        assert!(
+            reconstructed.contains("package main"),
+            "Reconstructed should contain package declaration"
+        );
+        assert!(
+            reconstructed.contains("func Hello"),
+            "Reconstructed should contain Hello function"
+        );
+    }
+
+    #[pg_test]
+    fn test_go_suggestion_exported_no_doc() {
+        let source = r#"package main
+
+func ExportedNoDoc() {}
+"#;
+        Spi::run(&format!(
+            "SELECT kerai.parse_go_source('{}', 'suggest_test.go')",
+            sql_escape(source),
+        ))
+        .unwrap();
+
+        let suggestion = Spi::get_one::<i64>(
+            "SELECT count(*) FROM kerai.nodes \
+             WHERE kind = 'suggestion' AND language = 'go' \
+             AND metadata->>'rule' = 'go_exported_no_doc'",
+        )
+        .unwrap()
+        .unwrap_or(0);
+
+        assert!(suggestion > 0, "Exported function without doc should trigger suggestion");
+    }
+
     /// sql_escape helper for tests
     fn sql_escape(s: &str) -> String {
         s.replace('\'', "''")
