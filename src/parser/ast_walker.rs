@@ -360,14 +360,15 @@ fn walk_impl(ctx: &mut WalkCtx, item: &syn::ItemImpl, parent_id: &str, position:
     };
 
     ctx.path_ctx.push(&label.replace(' ', "_").replace("::", "_"));
+    let impl_span = item.impl_token.span;
     let node_id = ctx.new_node(
         kinds::IMPL,
         Some(label),
         Some(parent_id),
         position,
         meta,
-        None,
-        None,
+        span_start_line(impl_span),
+        span_end_line(item.brace_token.span.close()),
     );
 
     for (i, attr) in item.attrs.iter().enumerate() {

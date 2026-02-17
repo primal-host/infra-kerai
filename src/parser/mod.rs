@@ -236,6 +236,16 @@ fn parse_single_file(
     let (mut nodes, mut edges) =
         ast_walker::walk_file(&syn_file, &file_node_id, instance_id, path_ctx);
 
+    // 4b. Normalize top-level item positions to use span_start (line numbers)
+    // so they interleave correctly with comments (which also use line numbers).
+    for node in &mut nodes {
+        if node.parent_id.as_deref() == Some(&file_node_id) {
+            if let Some(start) = node.span_start {
+                node.position = start;
+            }
+        }
+    }
+
     // 5. Collect string literal exclusion zones
     let exclusions = comment_extractor::collect_string_spans(&syn_file);
 

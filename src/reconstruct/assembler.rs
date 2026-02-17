@@ -19,82 +19,42 @@ pub fn assemble_file(file_node_id: &str) -> String {
         parts.push(String::new());
     }
 
-    // Collect item-level children ordered by position (including comments now)
+    // Collect all direct children ordered by span_start (interleaves items and comments)
     let items = query_child_items(file_node_id);
 
+    // Collect IDs of comment nodes that appear as direct children,
+    // so we can skip them when queried via edges (avoid duplication)
+    let direct_comment_ids: std::collections::HashSet<String> = items
+        .iter()
+        .filter(|i| i.kind == "comment" || i.kind == "comment_block")
+        .map(|i| i.id.clone())
+        .collect();
+
     for item in &items {
-        // Handle comment/comment_block nodes directly
+        // Handle comment/comment_block nodes — emit directly in position
         if item.kind == "comment" || item.kind == "comment_block" {
             let placement = item.placement.as_deref().unwrap_or("above");
-            if placement == "eof" || placement == "above" || placement == "between" {
-                if let Some(ref content) = item.content {
-                    let style = item.style.as_deref().unwrap_or("line");
-                    if style == "block" {
-                        parts.push(format!("/* {} */", content));
-                    } else {
-                        for line in content.split('\n') {
-                            if line.is_empty() {
-                                parts.push("//".to_string());
-                            } else {
-                                parts.push(format!("// {}", line));
-                            }
-                        }
-                    }
-                }
+            // Skip trailing comments here — they'll be appended to their target item
+            if placement == "trailing" {
+                continue;
             }
-            // Trailing comments are handled inline with their target item
+            if let Some(ref content) = item.content {
+                emit_comment(&mut parts, content, item.style.as_deref().unwrap_or("line"));
+            }
             continue;
-        }
-
-        // Query above comments for this item (via documents edges)
-        let above_comments = query_comments_for_item(&item.id, "above");
-        for comment in &above_comments {
-            let style = comment.style.as_deref().unwrap_or("line");
-            if style == "block" {
-                parts.push(format!("/* {} */", comment.content));
-            } else {
-                for line in comment.content.split('\n') {
-                    if line.is_empty() {
-                        parts.push("//".to_string());
-                    } else {
-                        parts.push(format!("// {}", line));
-                    }
-                }
-            }
-        }
-
-        // Between comments (emit before the item, with blank line separation)
-        let between_comments = query_comments_for_item(&item.id, "between");
-        for comment in &between_comments {
-            let style = comment.style.as_deref().unwrap_or("line");
-            if style == "block" {
-                parts.push(format!("/* {} */", comment.content));
-            } else {
-                for line in comment.content.split('\n') {
-                    if line.is_empty() {
-                        parts.push("//".to_string());
-                    } else {
-                        parts.push(format!("// {}", line));
-                    }
-                }
-            }
         }
 
         if let Some(ref source) = item.source {
             // source from ToTokens already includes doc attributes (#[doc = "..."])
-            // which prettyplease converts back to /// comments — no need to prepend
+            // which prettyplease converts back to /// comments
             // Check for trailing comments on same line
-            let trailing = query_comments_for_item(&item.id, "trailing");
-            if !trailing.is_empty() {
-                // Append trailing comment to the last line of source
-                let trail_text = &trailing[0].content;
-                let style = trailing[0].style.as_deref().unwrap_or("line");
-                let suffix = if style == "block" {
-                    format!(" /* {} */", trail_text)
+            let trailing = query_trailing_comments(&item.id, &direct_comment_ids);
+            if let Some(ref trail) = trailing {
+                let suffix = if trail.style.as_deref() == Some("block") {
+                    format!(" /* {} */", trail.content)
                 } else {
-                    format!(" // {}", trail_text)
+                    format!(" // {}", trail.content)
                 };
-                // Append to last line
                 let mut lines: Vec<&str> = source.lines().collect();
                 if let Some(last) = lines.last_mut() {
                     let combined = format!("{}{}", last, suffix);
@@ -131,6 +91,21 @@ pub fn assemble_file(file_node_id: &str) -> String {
     parts.join("\n")
 }
 
+/// Emit a comment (line or block style) into the parts list.
+fn emit_comment(parts: &mut Vec<String>, content: &str, style: &str) {
+    if style == "block" {
+        parts.push(format!("/* {} */", content));
+    } else {
+        for line in content.split('\n') {
+            if line.is_empty() {
+                parts.push("//".to_string());
+            } else {
+                parts.push(format!("// {}", line));
+            }
+        }
+    }
+}
+
 struct ChildItem {
     id: String,
     kind: String,
@@ -144,6 +119,7 @@ fn query_child_items(file_node_id: &str) -> Vec<ChildItem> {
     let mut items = Vec::new();
 
     Spi::connect(|client| {
+        // Order by position (line number for both items and comments)
         let query = format!(
             "SELECT id::text, kind, content, \
              metadata->>'source' AS source_text, \
@@ -182,34 +158,43 @@ struct CommentForItem {
     style: Option<String>,
 }
 
-fn query_comments_for_item(item_node_id: &str, placement: &str) -> Vec<CommentForItem> {
+/// Query trailing comments for an item via documents edges.
+/// Only returns comments that are also direct children (in the given set).
+fn query_trailing_comments(
+    item_node_id: &str,
+    direct_ids: &std::collections::HashSet<String>,
+) -> Option<CommentForItem> {
     let mut comments = Vec::new();
 
     Spi::connect(|client| {
         let query = format!(
-            "SELECT n.content, n.metadata->>'style' AS style \
+            "SELECT n.id::text, n.content, n.metadata->>'style' AS style \
              FROM kerai.nodes n \
              JOIN kerai.edges e ON e.source_id = n.id \
              WHERE e.target_id = '{}'::uuid \
              AND e.relation = 'documents' \
              AND n.kind IN ('comment', 'comment_block') \
-             AND COALESCE(n.metadata->>'placement', 'above') = '{}' \
+             AND COALESCE(n.metadata->>'placement', 'above') = 'trailing' \
              ORDER BY n.position ASC",
             item_node_id.replace('\'', "''"),
-            placement.replace('\'', "''"),
         );
 
         let result = client.select(&query, None, &[]).unwrap();
         for row in result {
+            let id: String = row.get_by_name::<String, _>("id")
+                .unwrap()
+                .unwrap_or_default();
             let content: String = row.get_by_name::<String, _>("content")
                 .unwrap()
                 .unwrap_or_default();
             let style: Option<String> = row.get_by_name::<String, _>("style").unwrap();
-            comments.push(CommentForItem { content, style });
+            if direct_ids.contains(&id) {
+                comments.push(CommentForItem { content, style });
+            }
         }
     });
 
-    comments
+    comments.into_iter().next()
 }
 
 fn query_inner_doc_comments(file_node_id: &str) -> Vec<String> {
