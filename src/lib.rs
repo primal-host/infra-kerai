@@ -17,6 +17,7 @@ mod perspectives;
 mod query;
 mod reconstruct;
 mod schema;
+pub mod sql;
 mod swarm;
 mod tasks;
 mod workers;
