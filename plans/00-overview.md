@@ -48,7 +48,7 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 | [11](11-external-economy.md) | External Economy | 05, 10, 20 | USDC bridge as privacy boundary, Fuchi wallet, selective disclosure, bounties, fiat on/off ramps |
 | [12](12-kerai-web.md) | Knowledge Editor | 01, 02, 04, 06, 08 | Web-based editor, document parsers, AI-assisted writing, corpus ingestion, real-time collaboration |
 | [13](13-microgpt.md) | MicroGPT | 01 | Tiny transformer model running inside Postgres for local inference |
-| [14](14-native-currency.md) | Native Currency | 01 | Koi token minting, wallets, transfers, reward schedules |
+| [14](14-native-currency.md) | Native Currency | 01 | Plaintext Koi layer: nKoi denomination, signed transfers, auto-minting, reward schedule. Plan 20 upgrades to private commitments. |
 | [15](15-comment-handling.md) | Comment Handling | 02, 03 | Source normalizer, comment grouping, placement classification, string-literal exclusion, comment-preserving reconstruction |
 | [16](16-reconstruction-intelligence.md) | Reconstruction Intelligence | 02, 03, 15 | Import sorting, derive ordering, inline `// kerai:` suggestions with dismissal tracking |
 | [17](17-go-language.md) | Go Language Support | 02, 15 | Parse Go source via tree-sitter, Go kinds, suggestion rules, reconstruction |
