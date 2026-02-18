@@ -44,7 +44,7 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 | [07](07-code-queries.md) | Code Queries | 05 | Structural query language for code insight |
 | [08](08-ai-perspectives.md) | AI Perspectives | 01, 04, 07 | Weighted nodes, agent views, knowledge valuation, compute cost tracking |
 | [09](09-agent-swarms.md) | Agent Swarms | 04, 06, 08 | Massive concurrent agents, autonomous pricing, market participation |
-| [10](10-zk-marketplace.md) | ZK Marketplace | 06, 08 | Zero-knowledge proofs, Dutch auctions, simultaneous release, open-source floor |
+| [10](10-zk-marketplace.md) | ZK Marketplace | 06, 08 | Dutch auctions, knowledge proofs, simultaneous release, open-source floor, dual-mode payments (plaintext or zK via Plan 20) |
 | [11](11-external-economy.md) | External Economy | 05, 10, 20 | USDC bridge as privacy boundary, Fuchi wallet, selective disclosure, bounties, fiat on/off ramps |
 | [12](12-kerai-web.md) | Knowledge Editor | 01, 02, 04, 06, 08 | Web-based editor, document parsers, AI-assisted writing, corpus ingestion, real-time collaboration |
 | [13](13-microgpt.md) | MicroGPT | 01 | Tiny transformer model running inside Postgres for local inference |
