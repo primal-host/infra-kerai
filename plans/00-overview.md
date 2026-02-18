@@ -19,18 +19,17 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 │  │   └─ 10 ZK Marketplace ← 06 + 08           │
 │  ├─ 07 Code Queries ←─────── 05               │
 │  │   └─ 08 AI Perspectives ← 01 + 04 + 07 ───┘
-│  └─ 11 External Economy ←── 05 + 10 + 20
+│  └─ 11 External Economy ←── 05 + 10 + 14
 │
 │  12 Knowledge Editor ←──── 01 + 02 + 04 + 06 + 08
 │
 │  13 MicroGPT ←─────────── 01
-│  14 Native Currency ←──── 01
+│  14 ZK Currency ←─────── 01 + 10
 │  15 Comment Handling ←─── 02 + 03
 │  16 Reconstruction Intelligence ← 02 + 03 + 15
 │  17 Go Language Support ← 02 + 15
 │  18 C Language Support ← 02 + 15 + 17
 │  19 Repository Ingestion ← 02 + 15 + 17 + 18
-│  20 ZK Currency ←─────── 01 + 10 + 14
 ```
 
 | Plan | Title | Depends On | Delivers |
@@ -44,17 +43,16 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 | [07](07-code-queries.md) | Code Queries | 05 | Structural query language for code insight |
 | [08](08-ai-perspectives.md) | AI Perspectives | 01, 04, 07 | Weighted nodes, agent views, knowledge valuation, compute cost tracking |
 | [09](09-agent-swarms.md) | Agent Swarms | 04, 06, 08 | Massive concurrent agents, autonomous pricing, market participation |
-| [10](10-zk-marketplace.md) | ZK Marketplace | 06, 08 | Dutch auctions, knowledge proofs, simultaneous release, open-source floor, dual-mode payments (plaintext or zK via Plan 20) |
-| [11](11-external-economy.md) | External Economy | 05, 10, 20 | USDC bridge as privacy boundary, Fuchi wallet, selective disclosure, bounties, fiat on/off ramps |
+| [10](10-zk-marketplace.md) | ZK Marketplace | 06, 08 | Dutch auctions, knowledge proofs, simultaneous release, open-source floor, dual-mode payments (plaintext or zK via Plan 14) |
+| [11](11-external-economy.md) | External Economy | 05, 10, 14 | USDC bridge as privacy boundary, Fuchi wallet, selective disclosure, bounties, fiat on/off ramps |
 | [12](12-kerai-web.md) | Knowledge Editor | 01, 02, 04, 06, 08 | Web-based editor, document parsers, AI-assisted writing, corpus ingestion, real-time collaboration |
 | [13](13-microgpt.md) | MicroGPT | 01 | Tiny transformer model running inside Postgres for local inference |
-| [14](14-native-currency.md) | Native Currency | 01 | Plaintext Koi layer: nKoi denomination, signed transfers, auto-minting, reward schedule. Plan 20 upgrades to private commitments. |
+| [14](14-zk-currency.md) | ZK Currency | 01, 10 | Plaintext Koi layer (implemented) + private ledger via zK proofs, Pedersen commitments, nullifier-based double-spend prevention, USDC bridge as privacy boundary |
 | [15](15-comment-handling.md) | Comment Handling | 02, 03 | Source normalizer, comment grouping, placement classification, string-literal exclusion, comment-preserving reconstruction |
 | [16](16-reconstruction-intelligence.md) | Reconstruction Intelligence | 02, 03, 15 | Import sorting, derive ordering, inline `// kerai:` suggestions with dismissal tracking |
 | [17](17-go-language.md) | Go Language Support | 02, 15 | Parse Go source via tree-sitter, Go kinds, suggestion rules, reconstruction |
 | [18](18-c-language.md) | C Language Support | 02, 15, 17 | Parse C source via tree-sitter, C kinds, declarator unwrapping, suggestion rules, reconstruction |
 | [19](19-repository-ingestion.md) | Repository Ingestion | 02, 15, 17, 18 | git2-based clone/fetch, commit graph, multi-language file tree, opaque fallback, language census, incremental mirror |
-| [20](20-zk-currency.md) | ZK Currency | 01, 10, 14 | Private Koi ledger via zK proofs, Pedersen commitments, nullifier-based double-spend prevention, USDC bridge as privacy boundary |
 
 ## Design Principles
 
