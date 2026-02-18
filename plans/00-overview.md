@@ -31,6 +31,7 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 │  18 C Language Support ← 02 + 15 + 17
 │  19 Repository Ingestion ← 02 + 15 + 17 + 18
 │  20 Active Inference ←──── 08 + 09 + 13
+│  21 Knowledge Crawler ←─── 12 + 19 + 20
 ```
 
 | Plan | Title | Depends On | Delivers |
@@ -55,6 +56,7 @@ Each plan builds on the ones before it. The dependency chain is linear through t
 | [18](18-c-language.md) | C Language Support | 02, 15, 17 | Parse C source via tree-sitter, C kinds, declarator unwrapping, suggestion rules, reconstruction |
 | [19](19-repository-ingestion.md) | Repository Ingestion | 02, 15, 17, 18 | git2-based clone/fetch, commit graph, multi-language file tree, opaque fallback, language census, incremental mirror |
 | [20](20-active-inference.md) | Active Inference | 08, 09, 13 | Expected free energy scoring for agent task selection, node entropy, pragmatic value, precision-as-Koi, Markov blanket scope boundaries, change entropy propagation |
+| [21](21-knowledge-crawler.md) | Knowledge Crawler | 12, 19, 20 | Autonomous corpus building — reference extraction, EFE scoring, web search, PDF/HTML conversion, citation graph traversal, background crawl loop |
 
 ## Design Principles
 
