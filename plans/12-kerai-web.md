@@ -45,7 +45,7 @@ Traefik (TLS termination, static files, routing)
 **The bridge handles:**
 - HTTP request → SQL function call translation
 - WebSocket ↔ LISTEN/NOTIFY relay for real-time collaboration
-- Session management and auth (map browser session to kerai wallet/identity)
+- Session management and auth (map browser session to kerai wallet/identity). *Under Plan 20, the session maps to a wallet whose balance is shielded. The bridge never sees the user's balance or commitment inventory — Fuchi runs client-side (browser or native app) and generates proofs locally. The bridge relays proofs to the extension, not amounts.*
 - Request validation and rate limiting
 
 **The bridge does NOT handle:**
@@ -238,6 +238,8 @@ Every piece of knowledge in the editor has traceable origins:
 - **Corpus-derived claims** — cites edges to the specific nodes (theorem, table, figure) in the source papers
 
 This provenance chain is what makes the knowledge economy (Plans 10-11) work at the editor level. A novel connection between two papers — identified by an AI agent, validated and incorporated by a human — has traceable, auditable origins. Its reproduction cost is measurable: how long would it take another agent to independently find this connection?
+
+*Under Plan 20, provenance edges are public data (they're structural, not financial). But the economic transactions triggered by provenance — bounty payouts for novel connections, auction earnings for valuable perspectives — flow through the private ledger. The editor shows provenance; Fuchi manages the economics.*
 
 ## Frontend
 

@@ -58,6 +58,11 @@ CREATE TABLE associations (
 -- An agent's identity (what it is, what model it uses) is separate from its
 -- wallet (Plan 01). The wallet_id links an agent to its financial identity
 -- for earning/spending Koi in the knowledge economy.
+-- Under Plan 20, the wallet operates in the shielded domain — the agent's
+-- balance is a set of Pedersen commitments, and financial operations (auction
+-- bids, bounty claims, transfers) generate zK proofs via an embedded
+-- Fuchi-equivalent library in the agent process. The wallet_id here is the
+-- public identity; the spending key and commitment inventory live client-side.
 CREATE TABLE agents (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     wallet_id   uuid REFERENCES wallets(id), -- agent's wallet for economic transactions (Plan 01)
@@ -166,6 +171,14 @@ WHERE NOT EXISTS (
 - **Context scoping:** Should `context_id` be required or optional? If optional, a perspective applies globally (this node is always relevant to this agent). Proposed: optional, defaulting to null (global).
 - **Reasoning storage:** The `reasoning` text field stores *why* the agent assigned this weight. Should this be structured (JSON) or free-form? Proposed: free-form text for now. Structured reasoning is a future evolution.
 - **Perspective decay:** Should old perspectives lose weight over time? Proposed: not automatically. Agents explicitly update their perspectives. Staleness can be queried via `updated_at`.
+
+## Relationship to Plan 20
+
+*Perspectives and associations are knowledge data, not financial data — they are not shielded by Plan 20's privacy layer. Weights, reasoning, and associations remain queryable in plaintext. What Plan 20 changes is the economic context around perspectives:*
+
+- *An agent's `wallet_id` links to a wallet that operates in the shielded domain under Plan 20. The agent earns Koi (as commitments) when its perspectives are sold via Dutch auctions (Plan 10), and spends Koi (via zK proofs) to acquire perspectives from other instances.*
+- *Perspective computation has a measurable compute cost. Under Plan 20, this cost is tracked in nKoi and auto-minted as a reward via `mint_reward('model_training', ...)`. The mint creates a commitment, not a plaintext ledger entry.*
+- *When perspectives are auctioned (Plan 10), the knowledge proof proves properties of the perspective data without revealing it. The payment for that knowledge flows through the private ledger.*
 
 ## Out of Scope
 
