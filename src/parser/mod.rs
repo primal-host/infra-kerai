@@ -1,7 +1,7 @@
 /// Parser module — Rust source → kerai.nodes + kerai.edges.
 use pgrx::prelude::*;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::time::Instant;
 use uuid::Uuid;
@@ -200,14 +200,25 @@ fn parse_source(source: &str, filename: &str) -> pgrx::JsonB {
 /// Parse a directory tree in parallel using pg_background workers.
 ///
 /// Walks the directory, discovers parseable files (.rs, .go, .c, .h, .md),
-/// launches a pg_background worker for each, waits for all to complete,
-/// and returns a JSON summary.
+/// and processes them through a sliding-window worker pool that keeps
+/// `max_workers` background workers saturated without exceeding capacity.
+///
+/// As each worker completes, a new file is immediately launched from the
+/// queue, maintaining full throughput without over-demanding pg_background.
 ///
 /// Requires the pg_background extension to be installed.
 #[pg_extern]
-fn parallel_parse(path: &str) -> pgrx::JsonB {
+fn parallel_parse(path: &str, max_workers: default!(i32, 0)) -> pgrx::JsonB {
     let start = Instant::now();
     let root = Path::new(path);
+    let num_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+    let pool_size = if max_workers > 0 {
+        max_workers as usize
+    } else {
+        num_cpus
+    };
 
     if !root.exists() {
         pgrx::error!("Path does not exist: {}", path);
@@ -225,7 +236,7 @@ fn parallel_parse(path: &str) -> pgrx::JsonB {
     }
 
     // Discover parseable files
-    let mut files: Vec<(String, String)> = Vec::new(); // (path, parse_command)
+    let mut queue: Vec<(String, String)> = Vec::new(); // (filename, parse_command)
 
     for entry in walkdir::WalkDir::new(root)
         .follow_links(true)
@@ -260,7 +271,6 @@ fn parallel_parse(path: &str) -> pgrx::JsonB {
 
         let cmd = match ext.as_str() {
             "rs" => {
-                // For Rust files, read source and use parse_source (avoids double file reads)
                 format!(
                     "SELECT kerai.parse_source(pg_read_file('{}'), '{}')",
                     abs_path,
@@ -279,10 +289,10 @@ fn parallel_parse(path: &str) -> pgrx::JsonB {
             _ => continue,
         };
 
-        files.push((filename, cmd));
+        queue.push((filename, cmd));
     }
 
-    if files.is_empty() {
+    if queue.is_empty() {
         return pgrx::JsonB(json!({
             "path": path,
             "files": 0,
@@ -292,86 +302,138 @@ fn parallel_parse(path: &str) -> pgrx::JsonB {
         }));
     }
 
-    // Launch all workers in parallel
-    let mut handles: Vec<(String, i32, i64)> = Vec::new(); // (filename, pid, cookie)
+    let total_files = queue.len();
 
-    for (filename, cmd) in &files {
-        let safe_cmd = cmd.replace('\'', "''");
-        let launch_sql = format!(
-            "SELECT pid, cookie FROM pg_background_launch_v2('{}')",
-            safe_cmd
-        );
+    // Reverse so we can pop from the back efficiently (LIFO as queue drain)
+    queue.reverse();
 
-        match Spi::connect(|client| {
-            let row = client
-                .select(&launch_sql, None, &[])?
-                .first()
-                .get_two::<i32, i64>()?;
-            Ok::<_, spi::Error>(row)
-        }) {
-            Ok((Some(pid), Some(cookie))) => {
-                handles.push((filename.clone(), pid, cookie));
-            }
-            Ok(_) => {
-                warning!("Failed to launch worker for {}: null pid/cookie", filename);
-            }
-            Err(e) => {
-                warning!("Failed to launch worker for {}: {}", filename, e);
-                // If we hit max_worker_processes, stop launching and wait for what we have
-                break;
-            }
-        }
-    }
-
-    let launched = handles.len();
-
-    // Wait for all and collect results
+    // Sliding-window worker pool
+    let mut inflight: VecDeque<(String, i32, i64)> = VecDeque::new(); // (filename, pid, cookie)
     let mut total_nodes = 0u64;
     let mut total_edges = 0u64;
     let mut results: Vec<serde_json::Value> = Vec::new();
+    let mut launched = 0usize;
+    let mut failed_launches = 0usize;
 
-    for (filename, pid, cookie) in &handles {
-        // Wait for completion
-        let wait_sql = format!("SELECT pg_background_wait_v2({}, {})", pid, cookie);
-        let _ = Spi::run(&wait_sql);
+    // Fill the initial window
+    while inflight.len() < pool_size {
+        if let Some((filename, cmd)) = queue.pop() {
+            if let Some(handle) = launch_worker(&filename, &cmd) {
+                inflight.push_back(handle);
+                launched += 1;
+            } else {
+                failed_launches += 1;
+            }
+        } else {
+            break;
+        }
+    }
 
-        // Collect result
-        let result_sql = format!(
-            "SELECT result FROM pg_background_result_v2({}, {}) AS (result jsonb)",
-            pid, cookie
+    // Drain-and-refill: wait for oldest, collect result, launch next
+    while let Some((filename, pid, cookie)) = inflight.pop_front() {
+        collect_worker_result(
+            &filename, pid, cookie,
+            &mut total_nodes, &mut total_edges, &mut results,
         );
 
-        match Spi::get_one::<pgrx::JsonB>(&result_sql) {
-            Ok(Some(pgrx::JsonB(val))) => {
-                let nodes = val.get("nodes").and_then(|v| v.as_u64()).unwrap_or(0);
-                let edges = val.get("edges").and_then(|v| v.as_u64()).unwrap_or(0);
-                total_nodes += nodes;
-                total_edges += edges;
-                results.push(json!({
-                    "file": filename,
-                    "nodes": nodes,
-                    "edges": edges,
-                }));
-            }
-            Ok(None) => {
-                results.push(json!({"file": filename, "error": "no result"}));
-            }
-            Err(e) => {
-                results.push(json!({"file": filename, "error": e.to_string()}));
+        // Launch replacement from queue
+        if let Some((next_filename, next_cmd)) = queue.pop() {
+            if let Some(handle) = launch_worker(&next_filename, &next_cmd) {
+                inflight.push_back(handle);
+                launched += 1;
+            } else {
+                // Launch failed — re-queue and stop launching to avoid cascading failures.
+                // Remaining queued files will be reported in the summary.
+                queue.push((next_filename, next_cmd));
+                failed_launches += queue.len() + 1;
+                queue.clear();
             }
         }
     }
 
     let elapsed = start.elapsed();
 
-    pgrx::JsonB(json!({
+    let mut summary = json!({
         "path": path,
         "files": launched,
+        "total_discovered": total_files,
         "nodes": total_nodes,
         "edges": total_edges,
+        "max_workers": pool_size,
         "results": results,
         "elapsed_ms": elapsed.as_millis() as u64,
-    }))
+    });
+
+    if failed_launches > 0 {
+        summary["failed_launches"] = json!(failed_launches);
+    }
+
+    pgrx::JsonB(summary)
+}
+
+/// Launch a single pg_background worker. Returns (filename, pid, cookie) or None on failure.
+fn launch_worker(filename: &str, cmd: &str) -> Option<(String, i32, i64)> {
+    let safe_cmd = cmd.replace('\'', "''");
+    let launch_sql = format!(
+        "SELECT pid, cookie FROM pg_background_launch_v2('{}')",
+        safe_cmd
+    );
+
+    match Spi::connect(|client| {
+        let row = client
+            .select(&launch_sql, None, &[])?
+            .first()
+            .get_two::<i32, i64>()?;
+        Ok::<_, spi::Error>(row)
+    }) {
+        Ok((Some(pid), Some(cookie))) => Some((filename.to_string(), pid, cookie)),
+        Ok(_) => {
+            warning!("Failed to launch worker for {}: null pid/cookie", filename);
+            None
+        }
+        Err(e) => {
+            warning!("Failed to launch worker for {}: {}", filename, e);
+            None
+        }
+    }
+}
+
+/// Wait for a pg_background worker and collect its parse result.
+fn collect_worker_result(
+    filename: &str,
+    pid: i32,
+    cookie: i64,
+    total_nodes: &mut u64,
+    total_edges: &mut u64,
+    results: &mut Vec<serde_json::Value>,
+) {
+    let wait_sql = format!("SELECT pg_background_wait_v2({}, {})", pid, cookie);
+    let _ = Spi::run(&wait_sql);
+
+    let result_sql = format!(
+        "SELECT result FROM pg_background_result_v2({}, {}) AS (result jsonb)",
+        pid, cookie
+    );
+
+    match Spi::get_one::<pgrx::JsonB>(&result_sql) {
+        Ok(Some(pgrx::JsonB(val))) => {
+            let nodes = val.get("nodes").and_then(|v| v.as_u64()).unwrap_or(0);
+            let edges = val.get("edges").and_then(|v| v.as_u64()).unwrap_or(0);
+            *total_nodes += nodes;
+            *total_edges += edges;
+            results.push(json!({
+                "file": filename,
+                "nodes": nodes,
+                "edges": edges,
+            }));
+        }
+        Ok(None) => {
+            results.push(json!({"file": filename, "error": "no result"}));
+        }
+        Err(e) => {
+            results.push(json!({"file": filename, "error": e.to_string()}));
+        }
+    }
 }
 
 /// Parse a single Rust file's source, insert nodes/edges, return counts.
