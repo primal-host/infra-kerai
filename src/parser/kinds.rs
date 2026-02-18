@@ -126,6 +126,9 @@ pub enum Kind {
 
     // Reconstruction intelligence
     Suggestion,
+
+    // Knowledge graph
+    Reference,
 }
 
 impl Kind {
@@ -243,6 +246,8 @@ impl Kind {
             Kind::TraitItemOther => "trait_item_other",
             // Reconstruction intelligence
             Kind::Suggestion => "suggestion",
+            // Knowledge graph
+            Kind::Reference => "reference",
         }
     }
 
@@ -275,6 +280,7 @@ impl Kind {
         Kind::Param, Kind::ReturnType,
         Kind::ItemOther, Kind::ImplItemOther, Kind::TraitItemOther,
         Kind::Suggestion,
+        Kind::Reference,
     ];
 }
 
@@ -387,6 +393,7 @@ impl std::str::FromStr for Kind {
             "impl_item_other" => Ok(Kind::ImplItemOther),
             "trait_item_other" => Ok(Kind::TraitItemOther),
             "suggestion" => Ok(Kind::Suggestion),
+            "reference" => Ok(Kind::Reference),
             other => Err(format!("unknown kind: {}", other)),
         }
     }
