@@ -97,40 +97,24 @@ impl Parser {
             };
         }
 
-        // Definition line: `:name target`
-        if let Some(rest) = trimmed.strip_prefix(':') {
-            let tokens = tokenize(rest);
-            if tokens.len() >= 2 {
-                return Line::Definition {
-                    name: tokens[0].value.clone(),
-                    target: tokens[1..]
-                        .iter()
-                        .map(|t| t.value.as_str())
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                    notation: self.notation(),
-                };
-            }
-            // Malformed definition — treat as comment
-            return Line::Comment {
-                text: raw.to_string(),
-            };
-        }
-
         let tokens = tokenize(trimmed);
         if tokens.is_empty() {
             return Line::Empty;
         }
 
-        // Type annotation: first token ends with `:`
-        if tokens[0].value.ends_with(':') && !tokens[0].quoted {
+        // Definition line: `name: target` — trailing colon on first token
+        if tokens[0].value.ends_with(':') && !tokens[0].quoted && tokens.len() >= 2 {
             let name = tokens[0].value.trim_end_matches(':').to_string();
-            let type_expr = tokens[1..]
+            let target = tokens[1..]
                 .iter()
                 .map(|t| t.value.as_str())
                 .collect::<Vec<_>>()
                 .join(" ");
-            return Line::TypeAnnotation { name, type_expr };
+            return Line::Definition {
+                name,
+                target,
+                notation: self.notation(),
+            };
         }
 
         // Check for kerai.* directive (or alias-resolved equivalent)
@@ -594,7 +578,7 @@ mod tests {
     #[test]
     fn definition_line() {
         let mut parser = Parser::new();
-        let doc = parser.parse(":pg postgres\n");
+        let doc = parser.parse("pg: postgres\n");
         assert_eq!(doc.lines.len(), 1);
         match &doc.lines[0] {
             Line::Definition {
@@ -607,20 +591,6 @@ mod tests {
                 assert_eq!(*notation, Notation::Prefix);
             }
             other => panic!("expected Definition, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn type_annotation() {
-        let mut parser = Parser::new();
-        let doc = parser.parse("name: String\n");
-        assert_eq!(doc.lines.len(), 1);
-        match &doc.lines[0] {
-            Line::TypeAnnotation { name, type_expr } => {
-                assert_eq!(name, "name");
-                assert_eq!(type_expr, "String");
-            }
-            other => panic!("expected TypeAnnotation, got {other:?}"),
         }
     }
 
@@ -749,7 +719,7 @@ mod tests {
     #[test]
     fn definition_with_multiple_words() {
         let mut parser = Parser::new();
-        let doc = parser.parse(":alias some target value\n");
+        let doc = parser.parse("alias: some target value\n");
         match &doc.lines[0] {
             Line::Definition { name, target, .. } => {
                 assert_eq!(name, "alias");
@@ -870,7 +840,7 @@ mod tests {
     fn alias_resolved_directive_in_parens() {
         let mut parser = Parser::new();
         // Define alias, then use it in a paren group
-        let doc = parser.parse(":k kerai\nadd (k.postfix 1 2 +) 4\n");
+        let doc = parser.parse("k: kerai\nadd (k.postfix 1 2 +) 4\n");
         assert_eq!(doc.lines.len(), 2);
         match &doc.lines[1] {
             Line::Call {
@@ -928,7 +898,7 @@ mod tests {
     fn alias_directive_resolves_for_top_level() {
         let mut parser = Parser::new();
         // Alias makes k.infix resolve to kerai.infix
-        let doc = parser.parse(":k kerai\nk.infix\na b c\n");
+        let doc = parser.parse("k: kerai\nk.infix\na b c\n");
         assert!(matches!(&doc.lines[1], Line::Directive { name, .. } if name == "k.infix"));
         // Line 2 should be infix
         match &doc.lines[2] {
