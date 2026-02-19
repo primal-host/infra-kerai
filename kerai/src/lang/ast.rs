@@ -1,5 +1,7 @@
 use std::fmt;
 
+use super::expr::Expr;
+
 /// Notation mode for interpreting function-call lines.
 ///
 /// Controls which token in `a b c` is the function vs arguments:
@@ -50,9 +52,11 @@ pub enum Line {
     TypeAnnotation { name: String, type_expr: String },
 
     /// Function call: `name arg1 arg2` — interpretation depends on notation mode.
+    /// Args are `Expr` trees — flat lines produce `Expr::Atom` leaves,
+    /// parenthesized expressions produce nested `Expr::Apply` trees.
     Call {
         function: String,
-        args: Vec<String>,
+        args: Vec<Expr>,
         notation: Notation,
     },
 
