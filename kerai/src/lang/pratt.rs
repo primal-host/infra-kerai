@@ -100,12 +100,44 @@ impl<'a> PrattParser<'a> {
                 }
                 Some(inner)
             }
+            TokenKind::LBracket => {
+                self.advance(); // consume '['
+                let mut elements = Vec::new();
+                loop {
+                    match self.peek() {
+                        None => break,
+                        Some(tok) if tok.kind == TokenKind::RBracket => {
+                            self.advance(); // consume ']'
+                            break;
+                        }
+                        Some(tok) if tok.kind == TokenKind::LBracket => {
+                            // Nested list — recurse via parse_atom
+                            if let Some(inner) = self.parse_atom() {
+                                elements.push(inner);
+                            }
+                        }
+                        Some(tok) if tok.kind == TokenKind::LParen => {
+                            // Paren group inside brackets — parse as sub-expression
+                            if let Some(inner) = self.parse_atom() {
+                                elements.push(inner);
+                            }
+                        }
+                        Some(_) => {
+                            // Word — everything is quoted (no operator evaluation)
+                            let val = self.peek().unwrap().value.clone();
+                            self.advance();
+                            elements.push(Expr::Atom(val));
+                        }
+                    }
+                }
+                Some(Expr::List(elements))
+            }
             TokenKind::Word => {
                 let val = tok.value.clone();
                 self.advance();
                 Some(Expr::Atom(val))
             }
-            TokenKind::RParen => None, // unexpected — let caller handle
+            TokenKind::RParen | TokenKind::RBracket => None, // unexpected — let caller handle
         }
     }
 
@@ -267,6 +299,74 @@ mod tests {
                 function: "b".into(),
                 args: vec![Expr::Atom("a".into()), Expr::Atom("c".into())],
             }
+        );
+    }
+
+    #[test]
+    fn bracket_list_literal() {
+        let tokens = tokenize("[1 2 3]");
+        let expr = parse_infix(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::List(vec![
+                Expr::Atom("1".into()),
+                Expr::Atom("2".into()),
+                Expr::Atom("3".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn infix_with_list_operand() {
+        // 1 + [2 3 4] → +(1, List([2, 3, 4]))
+        let tokens = tokenize("1 + [2 3 4]");
+        let expr = parse_infix(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Apply {
+                function: "+".into(),
+                args: vec![
+                    Expr::Atom("1".into()),
+                    Expr::List(vec![
+                        Expr::Atom("2".into()),
+                        Expr::Atom("3".into()),
+                        Expr::Atom("4".into()),
+                    ]),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn bracket_as_quotation() {
+        // [1 2 +] — no evaluation inside brackets
+        let tokens = tokenize("[1 2 +]");
+        let expr = parse_infix(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::List(vec![
+                Expr::Atom("1".into()),
+                Expr::Atom("2".into()),
+                Expr::Atom("+".into()),
+            ])
+        );
+    }
+
+    #[test]
+    fn nested_bracket_list() {
+        // [1 [2 3] 4] → List([1, List([2, 3]), 4])
+        let tokens = tokenize("[1 [2 3] 4]");
+        let expr = parse_infix(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::List(vec![
+                Expr::Atom("1".into()),
+                Expr::List(vec![
+                    Expr::Atom("2".into()),
+                    Expr::Atom("3".into()),
+                ]),
+                Expr::Atom("4".into()),
+            ])
         );
     }
 
