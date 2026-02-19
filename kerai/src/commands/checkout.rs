@@ -47,7 +47,7 @@ fn checkout_file(client: &mut Client, filename: &str) -> Result<(), String> {
 
 fn checkout_crate(client: &mut Client) -> Result<(), String> {
     let project_root = config::find_project_root()
-        .ok_or("No .kerai/config.toml found. Run 'kerai init' first.")?;
+        .ok_or("No .kerai/config.toml found. Run 'kerai pg.import' first.")?;
 
     let config_path = project_root.join(".kerai").join("config.toml");
     let content = std::fs::read_to_string(&config_path)

@@ -7,7 +7,7 @@ pub mod consensus_cmd;
 pub mod currency;
 pub mod find;
 pub mod info;
-pub mod init;
+pub mod import;
 pub mod log;
 pub mod market;
 pub mod model;
@@ -31,7 +31,7 @@ pub enum Command {
     Connect {
         connection: String,
     },
-    Init {
+    Import {
         path: Option<String>,
     },
     Ping,
@@ -282,7 +282,7 @@ pub fn run(
 
     let profile = config::load_config(profile_name);
 
-    // Determine the connection string for init's config file
+    // Determine the connection string for import's config file
     let conn_str = db_override
         .or(profile.connection.as_deref())
         .unwrap_or("postgres://localhost/kerai")
@@ -291,7 +291,7 @@ pub fn run(
     let mut client = db::connect(&profile, db_override)?;
 
     match command {
-        Command::Init { path } => init::run(&mut client, path.as_deref(), &conn_str, format),
+        Command::Import { path } => import::run(&mut client, path.as_deref(), &conn_str, format),
         Command::Ping => ping::run(&mut client),
         Command::Info => info::run(&mut client, format),
         Command::Version => version::run(&mut client, format),

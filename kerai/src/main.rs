@@ -118,8 +118,8 @@ enum PostgresAction {
         connection: String,
     },
 
-    /// Initialize a project: create config and parse crate
-    Init {
+    /// Import a project: create config and parse crate
+    Import {
         /// Path to project root (defaults to current directory)
         path: Option<String>,
     },
@@ -872,7 +872,7 @@ fn main() {
     let command = match cli.command {
         CliCommand::Postgres { action } => match action {
             PostgresAction::Connect { connection } => commands::Command::Connect { connection },
-            PostgresAction::Init { path } => commands::Command::Init { path },
+            PostgresAction::Import { path } => commands::Command::Import { path },
             PostgresAction::Ping => commands::Command::Ping,
             PostgresAction::Info => commands::Command::Info,
             PostgresAction::Version => commands::Command::Version,
