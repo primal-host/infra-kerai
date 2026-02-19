@@ -816,8 +816,9 @@ const NOTATION_SWITCHES: &[(&str, lang::Notation)] = &[
 ];
 
 /// Try to evaluate args as a calculator expression.
+/// Runs on raw args (before `rewrite_args`) so notation switches like `.a` aren't mangled.
 /// Returns `Some(result_string)` if evaluation happened, `None` to fall through to clap.
-fn try_eval(args: &[String]) -> Option<String> {
+fn try_eval(args: &[String], aliases: &HashMap<String, String>) -> Option<String> {
     // Extract positional args (skip program name, skip flags and their values)
     let mut positionals = Vec::new();
     let mut i = 1; // skip program name
@@ -848,9 +849,15 @@ fn try_eval(args: &[String]) -> Option<String> {
         // Dot-prefixed but not a notation switch — probably a dot-notation subcommand
         return None;
     } else {
-        // Check if first positional is a known subcommand (or alias-expanded subcommand)
+        // Check if first positional is a known subcommand
         if SUBCOMMANDS.contains(&positionals[0]) {
             return None;
+        }
+        // Check if it's an alias that expands to a known subcommand
+        if let Some(expanded) = aliases.get(positionals[0]) {
+            if SUBCOMMANDS.contains(&expanded.as_str()) {
+                return None;
+            }
         }
         (lang::Notation::Infix, 0)
     };
@@ -938,14 +945,15 @@ fn main() {
         Err(_) => HashMap::new(),
     };
 
-    let args = rewrite_args(env::args(), &aliases);
+    let raw_args: Vec<String> = env::args().collect();
 
-    // Try calculator/eval mode before clap subcommand dispatch
-    if let Some(result) = try_eval(&args) {
+    // Try calculator/eval mode on raw args (before rewrite mangles notation switches)
+    if let Some(result) = try_eval(&raw_args, &aliases) {
         println!("{result}");
         return;
     }
 
+    let args = rewrite_args(raw_args.into_iter(), &aliases);
     let cli = Cli::parse_from(args);
 
     let command = match cli.command {
@@ -1323,75 +1331,86 @@ mod tests {
         s.split_whitespace().map(String::from).collect()
     }
 
+    fn no_aliases() -> HashMap<String, String> {
+        HashMap::new()
+    }
+
     #[test]
     fn eval_simple_addition() {
-        assert_eq!(try_eval(&sv("kerai 3 + 4")), Some("7".into()));
+        assert_eq!(try_eval(&sv("kerai 3 + 4"), &no_aliases()), Some("7".into()));
     }
 
     #[test]
     fn eval_precedence() {
-        assert_eq!(try_eval(&sv("kerai 2 + 3 * 4")), Some("14".into()));
+        assert_eq!(try_eval(&sv("kerai 2 + 3 * 4"), &no_aliases()), Some("14".into()));
     }
 
     #[test]
     fn eval_postfix_switch() {
-        assert_eq!(try_eval(&sv("kerai .post 3 4 +")), Some("7".into()));
+        assert_eq!(try_eval(&sv("kerai .post 3 4 +"), &no_aliases()), Some("7".into()));
     }
 
     #[test]
     fn eval_postfix_chained() {
-        assert_eq!(try_eval(&sv("kerai .a 1 2 3 * +")), Some("7".into()));
+        assert_eq!(try_eval(&sv("kerai .a 1 2 3 * +"), &no_aliases()), Some("7".into()));
     }
 
     #[test]
     fn eval_prefix_switch() {
-        assert_eq!(try_eval(&sv("kerai .pre + 3 4")), Some("7".into()));
+        assert_eq!(try_eval(&sv("kerai .pre + 3 4"), &no_aliases()), Some("7".into()));
     }
 
     #[test]
     fn eval_prefix_nested() {
-        assert_eq!(try_eval(&sv("kerai .b + 1 * 2 3")), Some("7".into()));
+        assert_eq!(try_eval(&sv("kerai .b + 1 * 2 3"), &no_aliases()), Some("7".into()));
     }
 
     #[test]
     fn eval_hex_literal() {
-        assert_eq!(try_eval(&sv("kerai 0xFF")), Some("255".into()));
+        assert_eq!(try_eval(&sv("kerai 0xFF"), &no_aliases()), Some("255".into()));
     }
 
     #[test]
     fn eval_integer_division() {
-        assert_eq!(try_eval(&sv("kerai 10 / 3")), Some("3".into()));
+        assert_eq!(try_eval(&sv("kerai 10 / 3"), &no_aliases()), Some("3".into()));
     }
 
     #[test]
     fn eval_float_division() {
-        let result = try_eval(&sv("kerai 10.0 / 3")).unwrap();
+        let result = try_eval(&sv("kerai 10.0 / 3"), &no_aliases()).unwrap();
         assert!(result.starts_with("3.333333333333333"));
     }
 
     #[test]
     fn eval_string_passthrough() {
-        assert_eq!(try_eval(&sv("kerai hello")), Some("hello".into()));
+        assert_eq!(try_eval(&sv("kerai hello"), &no_aliases()), Some("hello".into()));
     }
 
     #[test]
     fn eval_subcommand_falls_through() {
-        assert_eq!(try_eval(&sv("kerai postgres ping")), None);
+        assert_eq!(try_eval(&sv("kerai postgres ping"), &no_aliases()), None);
+    }
+
+    #[test]
+    fn eval_alias_subcommand_falls_through() {
+        let mut aliases = HashMap::new();
+        aliases.insert("pg".to_string(), "postgres".to_string());
+        assert_eq!(try_eval(&sv("kerai pg ping"), &aliases), None);
     }
 
     #[test]
     fn eval_no_positionals_falls_through() {
-        assert_eq!(try_eval(&sv("kerai --db mydb")), None);
+        assert_eq!(try_eval(&sv("kerai --db mydb"), &no_aliases()), None);
     }
 
     #[test]
     fn eval_skips_flags() {
-        assert_eq!(try_eval(&sv("kerai --db mydb 3 + 4")), Some("7".into()));
+        assert_eq!(try_eval(&sv("kerai --db mydb 3 + 4"), &no_aliases()), Some("7".into()));
     }
 
     #[test]
     fn eval_dot_subcommand_falls_through() {
         // Dot-prefixed but not a notation switch — should fall through
-        assert_eq!(try_eval(&sv("kerai .unknown stuff")), None);
+        assert_eq!(try_eval(&sv("kerai .unknown stuff"), &no_aliases()), None);
     }
 }
