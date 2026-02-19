@@ -2,6 +2,8 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use crate::home;
+
 #[derive(Debug, Deserialize, Default)]
 pub struct ConfigFile {
     pub default: Option<Profile>,
@@ -55,11 +57,26 @@ fn load_file(path: &Path) -> Option<ConfigFile> {
     toml::from_str(&content).ok()
 }
 
-/// Resolve a profile by name, merging global defaults → project defaults → named profile.
+/// Load connection config from `~/.kerai/kerai.kerai`.
+fn load_kerai_config(kerai_home: &Path) -> Option<Profile> {
+    let map = home::load_kerai_file(kerai_home).ok()?;
+    let connection = map.get("postgres.global.connection").cloned();
+    if connection.is_some() {
+        Some(Profile {
+            connection,
+            ..Default::default()
+        })
+    } else {
+        None
+    }
+}
+
+/// Resolve a profile by name, merging:
+/// Global TOML default → Global TOML named → kerai.kerai → Project TOML default → Project TOML named
 pub fn load_config(profile_name: &str) -> Profile {
     let mut result = Profile::default();
 
-    // Global config
+    // Global TOML config
     if let Some(path) = global_config_path() {
         if let Some(cfg) = load_file(&path) {
             if let Some(default) = &cfg.default {
@@ -75,7 +92,14 @@ pub fn load_config(profile_name: &str) -> Profile {
         }
     }
 
-    // Project config (higher priority)
+    // kerai.kerai (global kerai-native config, between global and project TOML)
+    if let Ok(kerai_home) = home::ensure_home_dir() {
+        if let Some(kerai_profile) = load_kerai_config(&kerai_home) {
+            result.merge(&kerai_profile);
+        }
+    }
+
+    // Project TOML config (highest priority)
     if let Some(path) = find_project_config() {
         if let Some(cfg) = load_file(&path) {
             if let Some(default) = &cfg.default {
