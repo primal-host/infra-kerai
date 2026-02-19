@@ -1,3 +1,4 @@
+mod case;
 mod commands;
 mod config;
 mod db;
