@@ -247,7 +247,7 @@ fn link_citations() -> pgrx::JsonB {
                 if let Some(arr) = keys_val.as_array() {
                     let keys: Vec<String> = arr
                         .iter()
-                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                        .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                         .collect();
                     if !keys.is_empty() {
                         citations.push((id, keys));
@@ -315,7 +315,7 @@ pub(crate) fn parse_latex_single(
         kind: Kind::File.as_str().to_string(),
         language: Some("latex".to_string()),
         content: Some(filename.to_string()),
-        parent_id: parent_id.map(|s| s.to_string()),
+        parent_id: parent_id.map(std::string::ToString::to_string),
         position: 0,
         path: path_ctx.path(),
         metadata: json!({"line_count": source.lines().count()}),
@@ -354,7 +354,7 @@ pub(crate) fn parse_bibtex_single(
         kind: Kind::File.as_str().to_string(),
         language: Some("bibtex".to_string()),
         content: Some(filename.to_string()),
-        parent_id: parent_id.map(|s| s.to_string()),
+        parent_id: parent_id.map(std::string::ToString::to_string),
         position: 0,
         path: path_ctx.path(),
         metadata: json!({"line_count": source.lines().count()}),

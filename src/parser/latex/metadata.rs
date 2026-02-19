@@ -50,7 +50,7 @@ pub fn citation_metadata(node: &tree_sitter::Node, source: &str, cmd_name: &str)
 
     // The citation keys are in the curly group: \cite{key1,key2}
     if let Some(keys_text) = find_curly_group_text(node, source, 0) {
-        let keys: Vec<&str> = keys_text.split(',').map(|k| k.trim()).collect();
+        let keys: Vec<&str> = keys_text.split(',').map(str::trim).collect();
         meta.insert("keys".into(), json!(keys));
     }
 
@@ -113,7 +113,7 @@ pub fn documentclass_metadata(node: &tree_sitter::Node, source: &str) -> Value {
     }
 
     if let Some(options) = find_brack_group_text(node, source) {
-        let opts: Vec<&str> = options.split(',').map(|o| o.trim()).collect();
+        let opts: Vec<&str> = options.split(',').map(str::trim).collect();
         meta.insert("options".into(), json!(opts));
     }
 
@@ -130,7 +130,7 @@ pub fn usepackage_metadata(node: &tree_sitter::Node, source: &str) -> Value {
     }
 
     if let Some(options) = find_brack_group_text(node, source) {
-        let opts: Vec<&str> = options.split(',').map(|o| o.trim()).collect();
+        let opts: Vec<&str> = options.split(',').map(str::trim).collect();
         meta.insert("options".into(), json!(opts));
     }
 

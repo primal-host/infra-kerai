@@ -1,5 +1,5 @@
-/// LaTeX AST node kind constants, prefixed with `latex_` to avoid collisions
-/// with other language kinds in the `kerai.nodes.kind` column.
+// LaTeX AST node kind constants, prefixed with `latex_` to avoid collisions
+// with other language kinds in the `kerai.nodes.kind` column.
 
 // Document structure
 pub const LATEX_DOCUMENT: &str = "latex_document";

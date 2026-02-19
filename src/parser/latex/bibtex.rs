@@ -87,14 +87,14 @@ fn entry_metadata(entry: &biblatex::Entry) -> Value {
     if let Ok(authors) = entry.author() {
         let author_names: Vec<String> = authors
             .iter()
-            .map(|p| format_person(p))
+            .map(format_person)
             .collect();
         meta.insert("authors".into(), json!(author_names));
     }
 
     // Title
     if let Ok(title) = entry.title() {
-        meta.insert("title".into(), json!(chunks_to_string(&title)));
+        meta.insert("title".into(), json!(chunks_to_string(title)));
     }
 
     // Date/year
@@ -115,7 +115,7 @@ fn entry_metadata(entry: &biblatex::Entry) -> Value {
 
     // Journal
     if let Ok(journal) = entry.journal() {
-        meta.insert("journal".into(), json!(chunks_to_string(&journal)));
+        meta.insert("journal".into(), json!(chunks_to_string(journal)));
     }
 
     // DOI
@@ -141,7 +141,7 @@ fn entry_metadata(entry: &biblatex::Entry) -> Value {
 
     // ISBN
     if let Ok(isbn) = entry.isbn() {
-        meta.insert("isbn".into(), json!(chunks_to_string(&isbn)));
+        meta.insert("isbn".into(), json!(chunks_to_string(isbn)));
     }
 
     // Volume
@@ -177,11 +177,11 @@ fn extract_fields(entry: &biblatex::Entry) -> Vec<(String, String)> {
     let mut fields = Vec::new();
 
     if let Ok(title) = entry.title() {
-        fields.push(("title".into(), chunks_to_string(&title)));
+        fields.push(("title".into(), chunks_to_string(title)));
     }
 
     if let Ok(authors) = entry.author() {
-        let names: Vec<String> = authors.iter().map(|p| format_person(p)).collect();
+        let names: Vec<String> = authors.iter().map(format_person).collect();
         fields.push(("author".into(), names.join(" and ")));
     }
 
@@ -189,10 +189,12 @@ fn extract_fields(entry: &biblatex::Entry) -> Vec<(String, String)> {
         match date {
             biblatex::PermissiveType::Typed(d) => {
                 let year = match &d.value {
-                        biblatex::DateValue::At(dt) | biblatex::DateValue::After(dt) | biblatex::DateValue::Before(dt) => dt.year,
-                        biblatex::DateValue::Between(dt, _) => dt.year,
-                    };
-                    fields.push(("year".into(), year.to_string()));
+                    biblatex::DateValue::At(dt)
+                    | biblatex::DateValue::After(dt)
+                    | biblatex::DateValue::Before(dt) => dt.year,
+                    biblatex::DateValue::Between(dt, _) => dt.year,
+                };
+                fields.push(("year".into(), year.to_string()));
             }
             biblatex::PermissiveType::Chunks(chunks) => {
                 fields.push(("year".into(), owned_chunks_to_string(&chunks)));
@@ -201,7 +203,7 @@ fn extract_fields(entry: &biblatex::Entry) -> Vec<(String, String)> {
     }
 
     if let Ok(journal) = entry.journal() {
-        fields.push(("journal".into(), chunks_to_string(&journal)));
+        fields.push(("journal".into(), chunks_to_string(journal)));
     }
 
     if let Ok(doi) = entry.doi() {
@@ -213,7 +215,7 @@ fn extract_fields(entry: &biblatex::Entry) -> Vec<(String, String)> {
     }
 
     if let Ok(isbn) = entry.isbn() {
-        fields.push(("isbn".into(), chunks_to_string(&isbn)));
+        fields.push(("isbn".into(), chunks_to_string(isbn)));
     }
 
     fields

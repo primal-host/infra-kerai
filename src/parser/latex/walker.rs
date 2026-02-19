@@ -46,7 +46,7 @@ impl LatexWalkCtx {
             kind: kind.to_string(),
             language: Some("latex".to_string()),
             content,
-            parent_id: parent_id.map(|s| s.to_string()),
+            parent_id: parent_id.map(std::string::ToString::to_string),
             position,
             path: self.path_ctx.path(),
             metadata: meta,
@@ -335,7 +335,7 @@ fn walk_citation(
         .and_then(|v| v.as_array())
         .map(|arr| {
             arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .filter_map(|v| v.as_str().map(std::string::ToString::to_string))
                 .collect()
         })
         .unwrap_or_default();
@@ -434,7 +434,7 @@ fn walk_caption(
     let text = meta
         .get("text")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     ctx.new_node(
         kinds::LATEX_CAPTION,
@@ -460,7 +460,7 @@ fn walk_footnote(
     let text = meta
         .get("arg")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     ctx.new_node(
         kinds::LATEX_FOOTNOTE,
@@ -492,7 +492,7 @@ fn walk_input_cmd(
     let path = meta
         .get("path")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     ctx.new_node(
         kind,
@@ -518,7 +518,7 @@ fn walk_usepackage(
     let pkg = meta
         .get("package")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     ctx.new_node(
         kinds::LATEX_USEPACKAGE,
@@ -544,7 +544,7 @@ fn walk_documentclass(
     let class = meta
         .get("class")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string());
+        .map(std::string::ToString::to_string);
 
     ctx.new_node(
         kinds::LATEX_DOCUMENTCLASS,
