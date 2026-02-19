@@ -11,16 +11,11 @@ fn infix_binding_power(op: &str) -> (u8, u8) {
     }
 }
 
-/// Returns true if the token looks like an infix operator.
-/// Currently: single-char non-alphanumeric, non-paren, non-quote tokens.
+/// Returns true if the token can be an infix operator.
+/// In kerai infix mode, any non-quoted word can be an operator — unknown
+/// identifiers get low precedence (5, 6). Parens and quoted tokens are never operators.
 fn is_operator(token: &Token) -> bool {
-    if token.quoted || token.kind != TokenKind::Word {
-        return false;
-    }
-    let v = &token.value;
-    // Known operators
-    matches!(v.as_str(), "+" | "-" | "*" | "/" | "%")
-        || (v.len() == 1 && !v.chars().next().unwrap_or('a').is_alphanumeric() && v != "." && v != "_")
+    !token.quoted && token.kind == TokenKind::Word
 }
 
 /// Pratt parser for infix expressions with operator precedence.
@@ -67,11 +62,23 @@ impl<'a> PrattParser<'a> {
             }
 
             self.advance(); // consume operator
-            let rhs = self.parse_expr(r_bp)?;
-            lhs = Expr::Apply {
-                function: op,
-                args: vec![lhs, rhs],
-            };
+
+            match self.parse_expr(r_bp) {
+                Some(rhs) => {
+                    lhs = Expr::Apply {
+                        function: op,
+                        args: vec![lhs, rhs],
+                    };
+                }
+                None => {
+                    // No right operand — treat as unary application: op(lhs)
+                    lhs = Expr::Apply {
+                        function: op,
+                        args: vec![lhs],
+                    };
+                    break;
+                }
+            }
         }
 
         Some(lhs)
@@ -247,5 +254,33 @@ mod tests {
     fn empty_tokens() {
         let tokens = tokenize("");
         assert_eq!(parse_infix(&tokens), None);
+    }
+
+    #[test]
+    fn word_as_operator() {
+        // a b c → b(a, c) — word tokens work as infix operators
+        let tokens = tokenize("a b c");
+        let expr = parse_infix(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Apply {
+                function: "b".into(),
+                args: vec![Expr::Atom("a".into()), Expr::Atom("c".into())],
+            }
+        );
+    }
+
+    #[test]
+    fn two_token_unary() {
+        // c d → d(c) — missing right operand treated as unary
+        let tokens = tokenize("c d");
+        let expr = parse_infix(&tokens).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Apply {
+                function: "d".into(),
+                args: vec![Expr::Atom("c".into())],
+            }
+        );
     }
 }

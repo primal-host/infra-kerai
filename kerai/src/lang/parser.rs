@@ -222,26 +222,50 @@ impl Parser {
 
     /// Parse a prefix line that contains parenthesized sub-expressions.
     fn parse_prefix_line_with_parens(&mut self, tokens: &[Token]) -> Line {
-        // First word token is function, rest are args (which may contain paren groups)
-        let mut i = 0;
+        // Parse all tokens as expressions (handling paren groups)
+        let exprs = self.parse_arg_list(tokens, Notation::Prefix);
 
-        // Find the function name (first Word token)
-        while i < tokens.len() && tokens[i].kind != TokenKind::Word {
-            i += 1;
-        }
-        if i >= tokens.len() {
+        if exprs.is_empty() {
             return Line::Empty;
         }
-        let function = tokens[i].value.clone();
-        i += 1;
 
-        // Parse remaining tokens as args
-        let args = self.parse_arg_list(&tokens[i..], Notation::Prefix);
+        // Single expression — unwrap it as the line's call
+        if exprs.len() == 1 {
+            return match exprs.into_iter().next().unwrap() {
+                Expr::Atom(s) => Line::Call {
+                    function: s,
+                    args: vec![],
+                    notation: Notation::Prefix,
+                },
+                Expr::Apply { function, args } => Line::Call {
+                    function,
+                    args,
+                    notation: Notation::Prefix,
+                },
+            };
+        }
 
-        Line::Call {
-            function,
-            args,
-            notation: Notation::Prefix,
+        // Multiple expressions: first is function, rest are args
+        let mut iter = exprs.into_iter();
+        let first = iter.next().unwrap();
+        match first {
+            Expr::Atom(function) => {
+                let args: Vec<Expr> = iter.collect();
+                Line::Call {
+                    function,
+                    args,
+                    notation: Notation::Prefix,
+                }
+            }
+            Expr::Apply { function, mut args } => {
+                // First is already an Apply — extend with remaining
+                args.extend(iter);
+                Line::Call {
+                    function,
+                    args,
+                    notation: Notation::Prefix,
+                }
+            }
         }
     }
 
