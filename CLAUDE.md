@@ -111,3 +111,40 @@ postgres/src/
 - All `#[pg_extern]` functions go in their respective module (parser, functions, etc.)
 - SQL DDL lives exclusively in `postgres/src/schema.rs` via `extension_sql!`
 - Tests use `#[pg_test]` and live in `src/lib.rs`
+
+### Naming & Case Convention
+
+**Word case is cosmetic. camelCase is the preferred kerai-native form.**
+
+Identifiers are case-insensitive for matching — `nodeId`, `nodeid`, `NodeId`, and `node_id` all resolve to the same thing. The canonical display form is camelCase.
+
+Where this applies:
+- **JSON output keys**: `nodeId`, `createdAt`, `crateName` (not `node_id`)
+- **Table column headers** in human-readable CLI output: camelCase
+- **kerai.kerai config keys**: dot-namespaced camelCase (e.g. `postgres.global.connection`)
+- **kerai language identifiers**: camelCase in `.kerai` files
+
+**Postgres boundary — automatic translation:**
+- Postgres columns use snake_case per PG convention (`created_at`, `instance_id`)
+- The CLI translates snake_case ↔ camelCase at the boundary when reading query results or generating DDL
+- SQL strings within Rust code use snake_case (they talk to Postgres directly)
+- Results presented to the user use camelCase
+
+**Translation rules:**
+- kerai → Postgres: `createdAt` → `created_at` (insert underscore before each uppercase, lowercase all)
+- Postgres → kerai: `created_at` → `createdAt` (remove underscore, capitalize following letter)
+- Single-word identifiers are unchanged: `kind`, `path`, `content`
+
+### Kerai Language Syntax
+
+The `.kerai` file format uses these conventions:
+```
+# comment lines (# or //)
+:name target        — alias/function definition (leading colon)
+name: type          — type annotation (trailing colon, reserved/future)
+name arg            — function call, infix (no colon)
+```
+
+Files:
+- `~/.kerai/aliases.kerai` — user-editable aliases (`:pg postgres`)
+- `~/.kerai/kerai.kerai` — machine-controlled config (`postgres.global.connection ...`)
