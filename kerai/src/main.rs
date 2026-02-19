@@ -112,6 +112,12 @@ enum CliCommand {
 
 #[derive(Subcommand)]
 enum PostgresAction {
+    /// Set the global Postgres connection string
+    Connect {
+        /// Connection string (e.g. postgres://localhost/kerai)
+        connection: String,
+    },
+
     /// Initialize a project: create config and parse crate
     Init {
         /// Path to project root (defaults to current directory)
@@ -854,6 +860,7 @@ fn main() {
     let aliases = match home::ensure_home_dir() {
         Ok(home) => {
             let _ = home::ensure_aliases_file(&home);
+            let _ = home::ensure_kerai_file(&home);
             home::load_aliases(&home).unwrap_or_default()
         }
         Err(_) => HashMap::new(),
@@ -864,6 +871,7 @@ fn main() {
 
     let command = match cli.command {
         CliCommand::Postgres { action } => match action {
+            PostgresAction::Connect { connection } => commands::Command::Connect { connection },
             PostgresAction::Init { path } => commands::Command::Init { path },
             PostgresAction::Ping => commands::Command::Ping,
             PostgresAction::Info => commands::Command::Info,
