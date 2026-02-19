@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 pub use ast::{Document, Line, Notation};
-pub use expr::{Expr, PostfixToken};
+pub use expr::Expr;
 
 /// Parse kerai language source text into a Document.
 pub fn parse(source: &str) -> Document {
