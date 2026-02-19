@@ -1,11 +1,14 @@
 pub mod ast;
+pub mod expr;
 mod parser;
+mod pratt;
 pub mod token;
 
 use std::fs;
 use std::path::Path;
 
 pub use ast::{Document, Line, Notation};
+pub use expr::{Expr, PostfixToken};
 
 /// Parse kerai language source text into a Document.
 pub fn parse(source: &str) -> Document {
@@ -20,6 +23,46 @@ pub fn parse_file(path: &Path) -> Result<Document, String> {
     Ok(parse(&content))
 }
 
+/// Parse a single expression from source text under a given notation mode.
+pub fn parse_expr(source: &str, notation: Notation) -> Option<Expr> {
+    let tokens = token::tokenize(source);
+    if tokens.is_empty() {
+        return None;
+    }
+    match notation {
+        Notation::Infix => pratt::parse_infix(&tokens),
+        Notation::Prefix => {
+            let mut parser = parser::Parser::new();
+            let doc = parser.parse(source);
+            match doc.lines.into_iter().next()? {
+                Line::Call { function, args, .. } => {
+                    if args.is_empty() {
+                        Some(Expr::Atom(function))
+                    } else {
+                        Some(Expr::Apply { function, args })
+                    }
+                }
+                _ => None,
+            }
+        }
+        Notation::Postfix => {
+            let mut p = parser::Parser::new();
+            p.push_notation(Notation::Postfix);
+            let doc = p.parse(source);
+            match doc.lines.into_iter().next()? {
+                Line::Call { function, args, .. } => {
+                    if args.is_empty() {
+                        Some(Expr::Atom(function))
+                    } else {
+                        Some(Expr::Apply { function, args })
+                    }
+                }
+                _ => None,
+            }
+        }
+    }
+}
+
 /// Extract definitions from a document as `(name, target)` pairs.
 pub fn definitions(doc: &Document) -> Vec<(&str, &str)> {
     doc.lines
@@ -32,16 +75,46 @@ pub fn definitions(doc: &Document) -> Vec<(&str, &str)> {
 }
 
 /// Extract function calls from a document as `(function, args)` pairs.
+/// Only extracts `Atom` args as flat strings — nested `Apply` args are skipped.
 pub fn calls(doc: &Document) -> Vec<(&str, Vec<&str>)> {
     doc.lines
         .iter()
         .filter_map(|line| match line {
             Line::Call { function, args, .. } => {
-                Some((function.as_str(), args.iter().map(|s| s.as_str()).collect()))
+                let flat: Vec<&str> = args
+                    .iter()
+                    .filter_map(|e| match e {
+                        Expr::Atom(s) => Some(s.as_str()),
+                        _ => None,
+                    })
+                    .collect();
+                Some((function.as_str(), flat))
             }
             _ => None,
         })
         .collect()
+}
+
+/// Render an `Expr` back to source text.
+fn render_expr(expr: &Expr) -> String {
+    match expr {
+        Expr::Atom(s) => {
+            if s.contains(' ') {
+                format!("\"{s}\"")
+            } else {
+                s.clone()
+            }
+        }
+        Expr::Apply { function, args } => {
+            // Render as parenthesized prefix form: (function arg1 arg2)
+            let rendered_args: Vec<String> = args.iter().map(render_expr).collect();
+            if rendered_args.is_empty() {
+                format!("({function})")
+            } else {
+                format!("({function} {})", rendered_args.join(" "))
+            }
+        }
+    }
 }
 
 /// Render a single line back to source text.
@@ -57,7 +130,8 @@ pub fn render_line(line: &Line) -> String {
             if args.is_empty() {
                 function.clone()
             } else {
-                format!("{function} {}", args.join(" "))
+                let rendered: Vec<String> = args.iter().map(render_expr).collect();
+                format!("{function} {}", rendered.join(" "))
             }
         }
         Line::Directive { name, args } => {
@@ -161,9 +235,79 @@ a b c
         assert_eq!(cs.len(), 3);
         // prefix: a(b, c)
         assert_eq!(cs[0], ("a", vec!["b", "c"]));
-        // infix: b(a, c)
+        // infix: b(a, c) — Pratt parser, b is unknown operator
         assert_eq!(cs[1], ("b", vec!["a", "c"]));
         // postfix: c(a, b)
         assert_eq!(cs[2], ("c", vec!["a", "b"]));
+    }
+
+    #[test]
+    fn parse_expr_infix() {
+        let expr = parse_expr("1 + 2 * 3", Notation::Infix).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Apply {
+                function: "+".into(),
+                args: vec![
+                    Expr::Atom("1".into()),
+                    Expr::Apply {
+                        function: "*".into(),
+                        args: vec![Expr::Atom("2".into()), Expr::Atom("3".into())],
+                    },
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn parse_expr_prefix() {
+        let expr = parse_expr("add 1 2", Notation::Prefix).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Apply {
+                function: "add".into(),
+                args: vec![Expr::Atom("1".into()), Expr::Atom("2".into())],
+            }
+        );
+    }
+
+    #[test]
+    fn parse_expr_postfix() {
+        let expr = parse_expr("1 2 add", Notation::Postfix).unwrap();
+        assert_eq!(
+            expr,
+            Expr::Apply {
+                function: "add".into(),
+                args: vec![Expr::Atom("1".into()), Expr::Atom("2".into())],
+            }
+        );
+    }
+
+    #[test]
+    fn render_expr_nested() {
+        let line = Line::Call {
+            function: "add".into(),
+            args: vec![
+                Expr::Apply {
+                    function: "mul".into(),
+                    args: vec![Expr::Atom("2".into()), Expr::Atom("3".into())],
+                },
+                Expr::Atom("4".into()),
+            ],
+            notation: Notation::Prefix,
+        };
+        let rendered = render_line(&line);
+        assert_eq!(rendered, "add (mul 2 3) 4");
+    }
+
+    #[test]
+    fn calls_skips_nested_apply_args() {
+        // calls() should only extract Atom args for backward compat
+        let doc = parse("add (mul 2 3) 4\n");
+        let cs = calls(&doc);
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].0, "add");
+        // mul(2,3) is Apply, skipped; 4 is Atom, kept
+        assert_eq!(cs[0].1, vec!["4"]);
     }
 }
