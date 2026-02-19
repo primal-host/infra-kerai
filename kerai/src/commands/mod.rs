@@ -566,5 +566,6 @@ pub fn run(
         } => model::ensemble(&mut client, &agents, &context, top_k, format),
         Command::ModelInfo { agent } => model::info(&mut client, &agent, format),
         Command::ModelDelete { agent } => model::delete(&mut client, &agent, format),
+        Command::Connect { .. } => unreachable!("handled before db::connect()"),
     }
 }
