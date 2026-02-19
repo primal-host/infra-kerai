@@ -130,8 +130,7 @@ pub fn render_line(line: &Line) -> String {
     match line {
         Line::Empty => String::new(),
         Line::Comment { text } => text.clone(),
-        Line::Definition { name, target, .. } => format!(":{name} {target}"),
-        Line::TypeAnnotation { name, type_expr } => format!("{name}: {type_expr}"),
+        Line::Definition { name, target, .. } => format!("{name}: {target}"),
         Line::Call {
             function, args, ..
         } => {
@@ -168,7 +167,7 @@ mod tests {
 
     #[test]
     fn parse_aliases_file() {
-        let source = "# common aliases for kerai libraries\n:pg postgres\n";
+        let source = "# common aliases for kerai libraries\npg: postgres\n";
         let doc = parse(source);
         assert_eq!(doc.lines.len(), 2);
 
@@ -195,14 +194,14 @@ postgres.global.connection postgres://localhost/kerai
 
     #[test]
     fn definitions_extracts_only_definitions() {
-        let doc = parse(":a b\nfoo bar\n:c d\n# comment\n");
+        let doc = parse("a: b\nfoo bar\nc: d\n# comment\n");
         let defs = definitions(&doc);
         assert_eq!(defs, vec![("a", "b"), ("c", "d")]);
     }
 
     #[test]
     fn calls_extracts_only_calls() {
-        let doc = parse(":a b\nfoo bar baz\n# comment\nping\n");
+        let doc = parse("a: b\nfoo bar baz\n# comment\nping\n");
         let cs = calls(&doc);
         assert_eq!(cs.len(), 2);
         assert_eq!(cs[0], ("foo", vec!["bar", "baz"]));
@@ -213,7 +212,7 @@ postgres.global.connection postgres://localhost/kerai
     fn round_trip_preserves_structure() {
         let source = "\
 # comment line
-:pg postgres
+pg: postgres
 
 postgres.global.connection localhost
 ";
