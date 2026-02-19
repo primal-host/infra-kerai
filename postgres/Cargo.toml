@@ -48,12 +48,3 @@ pgrx-tests = "=0.17.0"
 unwrap_used = "warn"
 manual_string_new = "warn"
 redundant_closure_for_method_calls = "warn"
-
-[profile.dev]
-panic = "unwind"
-
-[profile.release]
-panic = "unwind"
-opt-level = 3
-lto = "fat"
-codegen-units = 1
