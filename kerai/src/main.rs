@@ -841,22 +841,28 @@ fn try_eval(args: &[String], aliases: &HashMap<String, String>) -> Option<String
         return None;
     }
 
-    // Check first positional for notation switch
+    // Normalize: join then re-split so `'3 + 4'` and `3 + 4` are equivalent
+    let tokens: Vec<&str> = positionals.iter().flat_map(|s| s.split_whitespace()).collect();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    // Check first token for notation switch
     let (notation, expr_start) = if let Some(&(_, notation)) = NOTATION_SWITCHES
         .iter()
-        .find(|&&(switch, _)| switch == positionals[0])
+        .find(|&&(switch, _)| switch == tokens[0])
     {
         (notation, 1)
-    } else if positionals[0].starts_with('.') {
+    } else if tokens[0].starts_with('.') {
         // Dot-prefixed but not a notation switch — probably a dot-notation subcommand
         return None;
     } else {
-        // Check if first positional is a known subcommand
-        if SUBCOMMANDS.contains(&positionals[0]) {
+        // Check if first token is a known subcommand
+        if SUBCOMMANDS.contains(&tokens[0]) {
             return None;
         }
         // Check if it's an alias that expands to a known subcommand
-        if let Some(expanded) = aliases.get(positionals[0]) {
+        if let Some(expanded) = aliases.get(tokens[0]) {
             if SUBCOMMANDS.contains(&expanded.as_str()) {
                 return None;
             }
@@ -864,7 +870,7 @@ fn try_eval(args: &[String], aliases: &HashMap<String, String>) -> Option<String
         (lang::Notation::Infix, 0)
     };
 
-    let source: String = positionals[expr_start..].join(" ");
+    let source: String = tokens[expr_start..].join(" ");
     if source.is_empty() {
         return None;
     }
