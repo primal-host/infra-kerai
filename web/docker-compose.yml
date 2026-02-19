@@ -7,8 +7,7 @@ services:
       dockerfile: web/Dockerfile
     environment:
       - DATABASE_URL=host=host.docker.internal dbname=kerai
-      - LISTEN_ADDR=0.0.0.0:3000
-      - STATIC_DIR=/srv/static
+      - LISTEN_ADDR=0.0.0.0:62830
     networks:
       - infra
     labels:
@@ -40,7 +39,7 @@ services:
       - "traefik.http.middlewares.kerai-domain-redirect.redirectregex.replacement=https://kerai.primal.host$${1}"
       - "traefik.http.middlewares.kerai-domain-redirect.redirectregex.permanent=true"
       # Service
-      - "traefik.http.services.kerai-editor.loadbalancer.server.port=3000"
+      - "traefik.http.services.kerai-editor.loadbalancer.server.port=62830"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped

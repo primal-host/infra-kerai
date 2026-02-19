@@ -13,7 +13,7 @@ impl Config {
             database_url: std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "host=/tmp dbname=kerai".to_string()),
             listen_addr: std::env::var("LISTEN_ADDR")
-                .unwrap_or_else(|_| "0.0.0.0:3000".to_string()),
+                .unwrap_or_else(|_| "0.0.0.0:62830".to_string()),
             static_dir: std::env::var("STATIC_DIR").ok(),
         }
     }

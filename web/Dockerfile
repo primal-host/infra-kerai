@@ -1,24 +1,29 @@
 FROM infra-eridu:latest AS builder
 WORKDIR /build
 
-# Copy web crate and workspace Cargo.lock
-COPY Cargo.lock ./web/
+# Workspace root — Cargo needs this to resolve members
+COPY Cargo.toml Cargo.lock ./
+
+# Copy kerai-cli crate (web depends on its lang module)
+COPY kerai/ ./kerai/
+
+# Stub postgres crate — workspace member but not built
+RUN mkdir -p postgres/src && \
+    echo '[package]\nname = "kerai"\nversion = "0.1.0"\nedition = "2021"\n\n[lib]\ncrate-type = ["cdylib"]' > postgres/Cargo.toml && \
+    echo '' > postgres/src/lib.rs
+
+# Copy web crate
 COPY web/ ./web/
 
-# Build Rust binary (web crate only, no pgrx dependency)
-RUN cd web && cargo build --release
-
-# Build frontend
-RUN cd web/frontend && npm install && npm run build
+# Build Rust binary (web crate only)
+RUN cargo build --release -p kerai-web
 
 # Runtime
 FROM ubuntu:24.04
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /build/web/target/release/kerai-web /usr/local/bin/
-COPY --from=builder /build/web/frontend/dist /srv/static
+COPY --from=builder /build/target/release/kerai-web /usr/local/bin/
 
-ENV STATIC_DIR=/srv/static
-EXPOSE 3000
+EXPOSE 62830
 
 CMD ["kerai-web"]
