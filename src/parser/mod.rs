@@ -25,6 +25,7 @@ mod suggestion_rules;
 mod treesitter;
 pub mod go;
 pub mod c;
+pub mod latex;
 
 use ast_walker::NodeRow;
 use comment_extractor::{CommentBlock, CommentPlacement};
@@ -290,6 +291,20 @@ fn parallel_parse(path: &str, max_workers: default!(i32, 0)) -> pgrx::JsonB {
                 let safe_name = filename.replace('\'', "''");
                 format!(
                     "SELECT kerai.parse_markdown(pg_read_file('{}'), '{}')",
+                    abs_path, safe_name
+                )
+            }
+            "tex" | "sty" | "cls" => {
+                let safe_name = filename.replace('\'', "''");
+                format!(
+                    "SELECT kerai.parse_latex_source(pg_read_file('{}'), '{}')",
+                    abs_path, safe_name
+                )
+            }
+            "bib" => {
+                let safe_name = filename.replace('\'', "''");
+                format!(
+                    "SELECT kerai.parse_bibtex_source(pg_read_file('{}'), '{}')",
                     abs_path, safe_name
                 )
             }

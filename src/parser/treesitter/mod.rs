@@ -6,6 +6,7 @@ pub mod cursor;
 pub enum TsLanguage {
     Go,
     C,
+    Latex,
 }
 
 impl TsLanguage {
@@ -13,6 +14,7 @@ impl TsLanguage {
         match self {
             TsLanguage::Go => tree_sitter_go::LANGUAGE.into(),
             TsLanguage::C => tree_sitter_c::LANGUAGE.into(),
+            TsLanguage::Latex => tree_sitter_latex::LANGUAGE.into(),
         }
     }
 
@@ -20,6 +22,7 @@ impl TsLanguage {
         match self {
             TsLanguage::Go => "go",
             TsLanguage::C => "c",
+            TsLanguage::Latex => "latex",
         }
     }
 }
