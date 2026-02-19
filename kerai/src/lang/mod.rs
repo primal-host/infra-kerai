@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod eval;
 pub mod expr;
 mod parser;
 mod pratt;
