@@ -22,6 +22,21 @@ cargo pgrx run pg17
 - Absolute `CARGO_TARGET_DIR` — fixes pgrx-tests relative path bug with initdb
 - `#[should_panic]` needed for constraint violation tests (PG errors propagate as panics)
 
+### tree-sitter-latex build prerequisite
+
+The `tree-sitter-latex` crate is a git dependency (not on crates.io). Its repo gitignores the generated `src/parser.c` file, so a fresh clone won't compile. Before the first build, generate it:
+
+```bash
+# Install tree-sitter CLI (one-time)
+cargo install tree-sitter-cli
+
+# Generate parser.c in the cargo git checkout
+CHECKOUT=$(find ~/.cargo/git/checkouts -name "tree-sitter-latex-*" -type d -maxdepth 1)/$(ls $(find ~/.cargo/git/checkouts -name "tree-sitter-latex-*" -type d -maxdepth 1))
+cd "$CHECKOUT" && tree-sitter generate && cd -
+```
+
+This only needs to be done once per checkout (or after `cargo clean` clears the git cache).
+
 ## Architecture
 
 ### Schema
@@ -44,7 +59,7 @@ src/
 │   ├── mod.rs          # Module declarations
 │   └── stubs.rs        # Stub functions for future plans
 ├── parser/
-│   ├── mod.rs          # Public API: parse_crate(), parse_file(), parse_source()
+│   ├── mod.rs          # Public API: parse_crate(), parse_file(), parse_source(), parallel_parse()
 │   ├── kinds.rs        # syn type → kind string constants
 │   ├── path_builder.rs # ltree path builder
 │   ├── metadata.rs     # JSONB metadata extraction from syn items
@@ -52,7 +67,15 @@ src/
 │   ├── cargo_parser.rs # Cargo.toml parser
 │   ├── crate_walker.rs # .rs file discovery via walkdir
 │   ├── ast_walker.rs   # Recursive AST walker (syn → NodeRow/EdgeRow)
-│   └── inserter.rs     # Batch SPI INSERT (500 rows/batch)
+│   ├── inserter.rs     # Batch SPI INSERT (500 rows/batch)
+│   ├── go/             # Go parser (tree-sitter-go)
+│   ├── c/              # C parser (tree-sitter-c)
+│   └── latex/          # LaTeX/BibTeX parser (tree-sitter-latex + biblatex)
+│       ├── mod.rs      # pg_extern: parse_latex_{source,file}, parse_bibtex_{source,file}, link_citations
+│       ├── kinds.rs    # latex_* and bib_* kind constants
+│       ├── metadata.rs # Metadata extractors for LaTeX tree-sitter nodes
+│       ├── walker.rs   # Tree-sitter CST walker with section hierarchy + label/ref resolution
+│       └── bibtex.rs   # BibTeX parser via biblatex crate
 └── bin/
     └── pgrx_embed.rs   # pgrx binary entrypoint
 ```
