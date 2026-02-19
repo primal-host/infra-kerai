@@ -38,6 +38,8 @@ pub fn parse_expr(source: &str, notation: Notation) -> Option<Expr> {
                 Line::Call { function, args, .. } => {
                     if args.is_empty() {
                         Some(Expr::Atom(function))
+                    } else if function == "list" && args.len() == 1 && matches!(&args[0], Expr::List(_)) {
+                        Some(args.into_iter().next().unwrap())
                     } else {
                         Some(Expr::Apply { function, args })
                     }
@@ -53,6 +55,8 @@ pub fn parse_expr(source: &str, notation: Notation) -> Option<Expr> {
                 Line::Call { function, args, .. } => {
                     if args.is_empty() {
                         Some(Expr::Atom(function))
+                    } else if function == "list" && args.len() == 1 && matches!(&args[0], Expr::List(_)) {
+                        Some(args.into_iter().next().unwrap())
                     } else {
                         Some(Expr::Apply { function, args })
                     }
@@ -113,6 +117,10 @@ fn render_expr(expr: &Expr) -> String {
             } else {
                 format!("({function} {})", rendered_args.join(" "))
             }
+        }
+        Expr::List(elements) => {
+            let rendered: Vec<String> = elements.iter().map(render_expr).collect();
+            format!("[{}]", rendered.join(" "))
         }
     }
 }
@@ -298,6 +306,52 @@ a b c
         };
         let rendered = render_line(&line);
         assert_eq!(rendered, "add (mul 2 3) 4");
+    }
+
+    #[test]
+    fn render_list_expr() {
+        let line = Line::Call {
+            function: "add".into(),
+            args: vec![
+                Expr::Atom("1".into()),
+                Expr::List(vec![
+                    Expr::Atom("2".into()),
+                    Expr::Atom("3".into()),
+                    Expr::Atom("4".into()),
+                ]),
+            ],
+            notation: Notation::Prefix,
+        };
+        let rendered = render_line(&line);
+        assert_eq!(rendered, "add 1 [2 3 4]");
+    }
+
+    #[test]
+    fn render_nested_list() {
+        let line = Line::Call {
+            function: "list".into(),
+            args: vec![Expr::List(vec![
+                Expr::Atom("1".into()),
+                Expr::List(vec![
+                    Expr::Atom("2".into()),
+                    Expr::Atom("3".into()),
+                ]),
+                Expr::Atom("4".into()),
+            ])],
+            notation: Notation::Prefix,
+        };
+        let rendered = render_line(&line);
+        assert_eq!(rendered, "list [1 [2 3] 4]");
+    }
+
+    #[test]
+    fn calls_skips_list_args() {
+        // calls() should skip List args, same as Apply
+        let doc = parse("add [1 2 3] 4\n");
+        let cs = calls(&doc);
+        assert_eq!(cs.len(), 1);
+        assert_eq!(cs[0].0, "add");
+        assert_eq!(cs[0].1, vec!["4"]);
     }
 
     #[test]
