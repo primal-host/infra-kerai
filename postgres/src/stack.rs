@@ -1,6 +1,6 @@
 use pgrx::prelude::*;
 
-use crate::sql::{sql_escape, sql_text};
+use crate::sql::sql_text;
 
 const SELF_INSTANCE: &str =
     "(SELECT id FROM kerai.instances WHERE is_self = true)";

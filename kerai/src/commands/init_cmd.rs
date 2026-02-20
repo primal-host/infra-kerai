@@ -1,6 +1,5 @@
 use postgres::Client;
 use std::env;
-use std::io::Write;
 
 use crate::output::OutputFormat;
 
