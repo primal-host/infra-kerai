@@ -111,6 +111,13 @@ enum CliCommand {
         #[command(subcommand)]
         action: ModelAction,
     },
+
+    /// Start the web server
+    Serve {
+        /// Listen address (default: 0.0.0.0:62830)
+        #[arg(long, default_value = "0.0.0.0:62830")]
+        addr: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -800,7 +807,7 @@ const FLAGS_WITH_VALUE: &[&str] = &["--db", "--profile", "--format"];
 const SUBCOMMANDS: &[&str] = &[
     "postgres", "sync", "perspective", "consensus", "peer",
     "agent", "task", "swarm", "market", "wallet", "bounty",
-    "currency", "model",
+    "currency", "model", "serve",
 ];
 
 /// Notation switch tokens mapped to notation modes.
@@ -1066,6 +1073,19 @@ fn main() {
 
     let args = rewrite_args(raw_args.into_iter(), &aliases);
     let cli = Cli::parse_from(args);
+
+    // Handle serve subcommand separately — it creates its own tokio runtime
+    if let CliCommand::Serve { addr } = &cli.command {
+        let profile = config::load_config(&cli.profile);
+        let db_url = cli.db.as_deref()
+            .or(profile.connection.as_deref())
+            .unwrap_or("host=/tmp dbname=kerai")
+            .to_string();
+        tokio::runtime::Runtime::new()
+            .expect("Failed to create tokio runtime")
+            .block_on(kerai_cli::serve::run(addr, &db_url));
+        return;
+    }
 
     let command = match cli.command {
         CliCommand::Postgres { action } => match action {
@@ -1376,6 +1396,7 @@ fn main() {
                 enabled,
             },
         },
+        CliCommand::Serve { .. } => unreachable!("handled above"),
     };
 
     if let Err(e) = commands::run(command, &cli.profile, cli.db.as_deref(), &cli.format) {
