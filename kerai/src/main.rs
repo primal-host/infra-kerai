@@ -112,6 +112,18 @@ enum CliCommand {
         action: ModelAction,
     },
 
+    /// Manage configuration preferences
+    Config {
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+
+    /// Manage aliases
+    Alias {
+        #[command(subcommand)]
+        action: AliasAction,
+    },
+
     /// Start the web server
     Serve {
         /// Listen address (default: 0.0.0.0:62830)
@@ -800,6 +812,60 @@ enum CurrencyAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ConfigAction {
+    /// Get a config value
+    Get {
+        /// Config key
+        key: String,
+    },
+
+    /// Set a config value
+    Set {
+        /// Config key
+        key: String,
+
+        /// Config value
+        value: String,
+    },
+
+    /// List all config values
+    List,
+
+    /// Delete a config value
+    Delete {
+        /// Config key
+        key: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum AliasAction {
+    /// Get an alias target
+    Get {
+        /// Alias name
+        name: String,
+    },
+
+    /// Set an alias
+    Set {
+        /// Alias name
+        name: String,
+
+        /// Target (e.g. postgres)
+        target: String,
+    },
+
+    /// List all aliases
+    List,
+
+    /// Delete an alias
+    Delete {
+        /// Alias name
+        name: String,
+    },
+}
+
 /// Known global flags that take a value argument.
 const FLAGS_WITH_VALUE: &[&str] = &["--db", "--profile", "--format"];
 
@@ -807,7 +873,7 @@ const FLAGS_WITH_VALUE: &[&str] = &["--db", "--profile", "--format"];
 const SUBCOMMANDS: &[&str] = &[
     "postgres", "sync", "perspective", "consensus", "peer",
     "agent", "task", "swarm", "market", "wallet", "bounty",
-    "currency", "model", "serve",
+    "currency", "model", "config", "alias", "serve",
 ];
 
 /// Notation switch tokens mapped to notation modes.
@@ -1040,12 +1106,12 @@ fn rewrite_args(
 }
 
 fn main() {
-    // Set up ~/.kerai/ and load aliases (non-fatal on failure)
+    // Set up ~/.kerai/ and load aliases from cache (non-fatal on failure)
     let aliases = match home::ensure_home_dir() {
         Ok(home) => {
             let _ = home::ensure_aliases_file(&home);
             let _ = home::ensure_kerai_file(&home);
-            home::load_aliases(&home).unwrap_or_default()
+            home::load_aliases_cache(&home).unwrap_or_default()
         }
         Err(_) => HashMap::new(),
     };
@@ -1355,6 +1421,18 @@ fn main() {
             },
             ModelAction::Info { agent } => commands::Command::ModelInfo { agent },
             ModelAction::Delete { agent } => commands::Command::ModelDelete { agent },
+        },
+        CliCommand::Config { action } => match action {
+            ConfigAction::Get { key } => commands::Command::ConfigGet { key },
+            ConfigAction::Set { key, value } => commands::Command::ConfigSet { key, value },
+            ConfigAction::List => commands::Command::ConfigList,
+            ConfigAction::Delete { key } => commands::Command::ConfigDelete { key },
+        },
+        CliCommand::Alias { action } => match action {
+            AliasAction::Get { name } => commands::Command::AliasGet { name },
+            AliasAction::Set { name, target } => commands::Command::AliasSet { name, target },
+            AliasAction::List => commands::Command::AliasList,
+            AliasAction::Delete { name } => commands::Command::AliasDelete { name },
         },
         CliCommand::Currency { action } => match action {
             CurrencyAction::Register {
