@@ -618,6 +618,27 @@ ALTER TABLE kerai.wallets ADD COLUMN nonce BIGINT NOT NULL DEFAULT 0;
     requires = ["table_wallets"]
 );
 
+// Table: preferences — per-instance key/value settings
+extension_sql!(
+    r#"
+CREATE TABLE kerai.preferences (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id UUID NOT NULL REFERENCES kerai.instances(id),
+    category    TEXT NOT NULL,
+    key         TEXT NOT NULL,
+    value       TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(instance_id, category, key)
+);
+
+CREATE INDEX idx_preferences_instance ON kerai.preferences (instance_id);
+CREATE INDEX idx_preferences_category ON kerai.preferences (category);
+"#,
+    name = "table_preferences",
+    requires = ["table_instances"]
+);
+
 // Table: model_vocab — node UUID ↔ dense integer index per model
 extension_sql!(
     r#"
