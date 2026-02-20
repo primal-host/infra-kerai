@@ -25,10 +25,11 @@ services:
       - "traefik.http.routers.kerai-editor-local.rule=Host(`kerai.localhost`)"
       - "traefik.http.routers.kerai-editor-local.entrypoints=http"
       - "traefik.http.routers.kerai-editor-local.middlewares=noknok-auth@docker"
-      # ker.ai (HTTPS) — no auth, public calculator
+      # ker.ai (HTTPS) — authenticated via noknok
       - "traefik.http.routers.kerai-domain.rule=Host(`ker.ai`)"
       - "traefik.http.routers.kerai-domain.entrypoints=https"
       - "traefik.http.routers.kerai-domain.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.kerai-domain.middlewares=noknok-auth@docker"
       # ker.ai HTTP->HTTPS redirect
       - "traefik.http.routers.kerai-domain-http.rule=Host(`ker.ai`)"
       - "traefik.http.routers.kerai-domain-http.entrypoints=http"
