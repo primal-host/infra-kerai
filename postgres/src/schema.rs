@@ -718,3 +718,22 @@ CREATE INDEX idx_inference_log_agent ON kerai.inference_log (agent_id);
     name = "table_inference_log",
     requires = ["table_agents"]
 );
+
+// Table: stack — general-purpose content stack per instance
+extension_sql!(
+    r#"
+CREATE TABLE kerai.stack (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_id UUID NOT NULL REFERENCES kerai.instances(id),
+    position    INTEGER NOT NULL,
+    label       TEXT,
+    content     TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(instance_id, position)
+);
+
+CREATE INDEX idx_stack_instance ON kerai.stack (instance_id);
+"#,
+    name = "table_stack",
+    requires = ["table_instances"]
+);
