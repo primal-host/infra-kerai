@@ -43,6 +43,41 @@ pub fn load_aliases(home: &Path) -> Result<HashMap<String, String>, String> {
         .collect())
 }
 
+/// Loads aliases from `aliases.cache` (tab-separated key\tvalue lines).
+/// Falls back to `aliases.kerai` if cache doesn't exist.
+pub fn load_aliases_cache(home: &Path) -> Result<HashMap<String, String>, String> {
+    let cache_path = home.join("aliases.cache");
+    if cache_path.exists() {
+        let content = fs::read_to_string(&cache_path)
+            .map_err(|e| format!("failed to read aliases.cache: {e}"))?;
+        let mut map = HashMap::new();
+        for line in content.lines() {
+            if let Some((key, value)) = line.split_once('\t') {
+                map.insert(key.to_string(), value.to_string());
+            }
+        }
+        return Ok(map);
+    }
+    // Fallback to aliases.kerai for backward compatibility
+    load_aliases(home)
+}
+
+/// Writes aliases to `aliases.cache` (tab-separated key\tvalue lines).
+pub fn sync_aliases_cache(home: &Path, aliases: &[(String, String)]) -> Result<(), String> {
+    let cache_path = home.join("aliases.cache");
+    let content: String = aliases
+        .iter()
+        .map(|(k, v)| format!("{k}\t{v}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let mut output = content;
+    if !output.is_empty() && !output.ends_with('\n') {
+        output.push('\n');
+    }
+    fs::write(&cache_path, output)
+        .map_err(|e| format!("failed to write aliases.cache: {e}"))
+}
+
 const KERAI_FILE_HEADER: &str = "\
 # kerai-controlled configuration — do not hand-edit
 # syntax: name: target (definition) | name arg (function call) | :name expr (type application)
