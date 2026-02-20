@@ -7,7 +7,7 @@
     <string>com.primal.kerai</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/primal/apps/primal-host/kerai/target/release/kerai</string>
+        <string>/usr/local/bin/kerai</string>
         <string>serve</string>
     </array>
     <key>EnvironmentVariables</key>
