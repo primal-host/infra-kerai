@@ -50,22 +50,11 @@ Dispatch is fully late-bound. `edit` doesn't know about CSV — it looks up a ha
 
 ## Stack Persistence
 
-The stack lives in `kerai.workspaces` (see Authentication & Workspaces section for full schema). Each user has multiple named workspaces, each with its own persisted stack:
+The stack lives in `kerai.stack_items` — one row per item, with a stable rowid from a Postgres sequence (see Authentication & Workspaces section for full schema). Each user has multiple named workspaces, each with its own stack items.
 
-```sql
-CREATE TABLE kerai.workspaces (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    UUID NOT NULL REFERENCES kerai.users(id),
-    name       TEXT NOT NULL,
-    stack      JSONB NOT NULL DEFAULT '[]',  -- serialized Vec<Ptr>
-    is_active  BOOLEAN DEFAULT false,
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE (user_id, name)
-);
-```
+Every stack mutation is a database operation: push = INSERT, pop = DELETE, dup = INSERT with same content. Rowids are permanent — delete row 5, and the next push gets a new higher ID, never 5 again. Push `[1 2 3]` and walk away — reconnect later and it's still there, same rowid, same position.
 
-Every stack mutation writes through to the active workspace row. Push `[1 2 3]` and walk away — reconnect later and it's still on top of the stack. Since the stack only holds pointers (not bulk data), serialization is trivial. The actual data behind referenced pointers is already in Postgres tables — it doesn't go anywhere.
+Since each stack item only holds a pointer (kind + ref_id + meta), rows are small. The actual data behind referenced pointers is already in Postgres tables — it doesn't go anywhere.
 
 ## Postgres as Universal Backbone
 
@@ -76,7 +65,8 @@ Every piece of data lives in Postgres:
 | Raw CSV data | `kaggle.m_teams`, etc. (real tables) |
 | Project metadata | `kerai.csv_projects`, `kerai.csv_files` |
 | Knowledge graph | `kerai.nodes`, `kerai.edges` |
-| Session/stack state | `kerai.sessions` |
+| Users & workspaces | `kerai.users`, `kerai.workspaces` |
+| Stack rows | `kerai.stack_items` (rowid sequence, per-workspace) |
 | User definitions | `kerai.definitions` (new) |
 | Named objects | `kerai.objects` (new, generic typed store) |
 
@@ -218,7 +208,7 @@ kerai> "SELECT * FROM kaggle.m_teams WHERE teamid > 1400" sql  # push query_resu
 kerai> dup csv.export                                 # export without consuming the result
 ```
 
-Stack manipulation words: `dup`, `swap`, `drop`, `over`, `rot`, `clear` — standard Forth vocabulary.
+Stack manipulation words: `dup`, `swap`, `drop`, `over`, `rot`, `clear` — standard Forth vocabulary. All accept an optional rowid prefix for direct access: `123 dup` copies row 123 to the top (see Web UI Integration for rowid display).
 
 ## Web UI Integration
 
@@ -228,12 +218,64 @@ The existing Axum server adds:
 - **`GET /api/object/:kind/:ref_id`** — fetches renderable content for a pointer
 - **WebSocket `/api/ws`** — live updates (import progress, stack changes)
 
-The browser renders each stack item as a card. Card appearance is determined by `kind`:
-- `csv_project` → table list with row counts
+### Stack Display
+
+Each stack row has a stable rowid (Postgres sequence — never renumbered, gaps are permanent). The UI displays the stack as a vertical list with rowids on the left:
+
+```
+   1  "hello world"
+   2  42
+   3  [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15...
+   4  kaggle.m_teams (381 rows, 4 cols)
+   5  march-machine-learning-mania-2026 (35 tables, 7.2M rows)
+```
+
+**Layout:**
+- Rowid: right-aligned in a ~100px left column, dim/muted color (e.g., `color: #666`)
+- Space separator between rowid and content
+- Content: rendered representation of the pointer, NOT raw JSON — each `kind` has a display formatter
+- Content clipped to viewport width with ellipsis for overflow
+
+**Display formatters by kind:**
+- `text` → character string, clipped to width
+- `int`/`float` → literal value
+- `list` → `[1 2 3 4 5...]` with truncation
+- `csv_project` → `project-name (N tables, M rows)`
+- `csv_table` → `schema.table (N rows, M cols)`
+- `query_result` → `query result (N rows)`
+- `workspace_list` → numbered selection list (see Workspace Management)
+- `library` → `postgres` / `csv` / etc.
+- `error` → red text
+
+### Direct Stack Manipulation by Rowid
+
+The rowid is not just a display element — it's a direct manipulation handle. Users can reference any stack item by its rowid:
+
+```
+kerai> 123 dup          # copy row 123 to the top of the stack
+kerai> 123 drop         # remove row 123 from the stack
+kerai> 123 view         # expand row 123 — show full content, no truncation
+kerai> 123 edit         # open row 123 in the appropriate editor
+kerai> 123 45 swap      # swap rows 123 and 45
+```
+
+This extends the standard Forth stack vocabulary (which only operates on the top few items) to allow random access by stable ID. Traditional `dup`/`swap`/`drop` with no rowid prefix operate on the top of the stack as usual.
+
+### View Expansion
+
+`view` expands a stack item to show its full content — the untruncated text, the full list, the complete table schema, etc. The web UI replaces the clipped single-line display with an expanded card view. `view` without a rowid expands the top of the stack.
+
+### Anonymous Sessions
+
+Users who haven't logged in get a random-named workspace (e.g., `anon-7f3a2b`) marked for discard. The workspace functions normally — the stack persists, rowids are stable — but the workspace is cleaned up when the browser session ends or the user logs in and switches to a real workspace. If the user logs in during an anonymous session, they can `workspace save "my-project"` to adopt it before it's discarded.
+
+### Card Rendering
+
+For complex types, the web UI renders richer cards instead of single-line summaries:
+- `csv_project` → table list with row counts (expandable)
 - `csv_table` → data preview (first 20 rows)
 - `query_result` → full result grid
-- `int`/`float`/`text`/`list` → inline display
-- `error` → red card
+- `workspace_list` → numbered selection list
 
 `edit` tells the browser to open an interactive editor for the top card.
 
@@ -312,15 +354,31 @@ CREATE TABLE kerai.workspaces (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id        UUID NOT NULL REFERENCES kerai.users(id),
     name           TEXT NOT NULL,
-    stack          JSONB NOT NULL DEFAULT '[]',  -- serialized Vec<Ptr>
     is_active      BOOLEAN DEFAULT false,
+    is_anonymous   BOOLEAN DEFAULT false,        -- true for not-yet-logged-in sessions
     created_at     TIMESTAMPTZ DEFAULT now(),
     updated_at     TIMESTAMPTZ DEFAULT now(),
     UNIQUE (user_id, name)
 );
+
+CREATE SEQUENCE kerai.stack_item_id_seq;
+
+CREATE TABLE kerai.stack_items (
+    id             BIGINT PRIMARY KEY DEFAULT nextval('kerai.stack_item_id_seq'),
+    workspace_id   UUID NOT NULL REFERENCES kerai.workspaces(id) ON DELETE CASCADE,
+    position       INTEGER NOT NULL,             -- ordering within the stack (top = highest)
+    kind           TEXT NOT NULL,                 -- "text", "int", "csv_project", etc.
+    ref_id         TEXT NOT NULL DEFAULT '',      -- UUID, qualified name, or literal value
+    meta           JSONB NOT NULL DEFAULT '{}',
+    created_at     TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE INDEX ON kerai.stack_items (workspace_id, position);
 ```
 
-Separated `users` from `workspaces` (was a single `sessions` table). One user has many workspaces. One workspace is active at a time per user. The active workspace's stack is what the web UI displays and the interpreter operates on.
+The stack is no longer a JSONB column — each item is a row with a stable `id` from a Postgres sequence. The `id` is the rowid displayed in the UI and used for direct manipulation (`123 dup`, `123 view`). IDs are never reused or renumbered. The `position` column determines stack order (top = highest position). Pushing appends at the highest position; popping removes the highest.
+
+Separated `users` from `workspaces`. One user has many workspaces. One workspace is active at a time per user. The active workspace's stack items are what the web UI displays and the interpreter operates on.
 
 ### Auth Endpoints
 
