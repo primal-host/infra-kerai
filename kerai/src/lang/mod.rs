@@ -34,6 +34,7 @@ pub fn parse_expr(source: &str, notation: Notation) -> Option<Expr> {
         Notation::Infix => pratt::parse_infix(&tokens),
         Notation::Prefix => {
             let mut parser = parser::Parser::new();
+            parser.push_notation(Notation::Prefix);
             let doc = parser.parse(source);
             match doc.lines.into_iter().next()? {
                 Line::Call { function, args, .. } => {
@@ -180,12 +181,13 @@ mod tests {
     #[test]
     fn parse_kerai_config_file() {
         let source = "\
+kerai.prefix
 # kerai-controlled configuration — do not hand-edit
 # syntax: :name target (definition) | name arg (function call) | name: type (reserved)
 postgres.global.connection postgres://localhost/kerai
 ";
         let doc = parse(source);
-        assert_eq!(doc.lines.len(), 3);
+        assert_eq!(doc.lines.len(), 4);
 
         let cs = calls(&doc);
         assert_eq!(cs.len(), 1);
@@ -202,16 +204,18 @@ postgres.global.connection postgres://localhost/kerai
 
     #[test]
     fn calls_extracts_only_calls() {
+        // Postfix default: `foo bar baz` → baz(foo, bar)
         let doc = parse("a: b\nfoo bar baz\n# comment\nping\n");
         let cs = calls(&doc);
         assert_eq!(cs.len(), 2);
-        assert_eq!(cs[0], ("foo", vec!["bar", "baz"]));
+        assert_eq!(cs[0], ("baz", vec!["foo", "bar"]));
         assert_eq!(cs[1], ("ping", Vec::<&str>::new()));
     }
 
     #[test]
     fn round_trip_preserves_structure() {
         let source = "\
+kerai.prefix
 # comment line
 pg: postgres
 
@@ -226,7 +230,7 @@ postgres.global.connection localhost
     fn empty_document() {
         let doc = parse("");
         assert!(doc.lines.is_empty());
-        assert_eq!(doc.default_notation, Notation::Prefix);
+        assert_eq!(doc.default_notation, Notation::Postfix);
     }
 
     #[test]
@@ -241,8 +245,8 @@ a b c
         let doc = parse(source);
         let cs = calls(&doc);
         assert_eq!(cs.len(), 3);
-        // prefix: a(b, c)
-        assert_eq!(cs[0], ("a", vec!["b", "c"]));
+        // postfix (default): c(a, b)
+        assert_eq!(cs[0], ("c", vec!["a", "b"]));
         // infix: b(a, c) — Pratt parser, b is unknown operator
         assert_eq!(cs[1], ("b", vec!["a", "c"]));
         // postfix: c(a, b)
@@ -347,7 +351,7 @@ a b c
     #[test]
     fn calls_skips_list_args() {
         // calls() should skip List args, same as Apply
-        let doc = parse("add [1 2 3] 4\n");
+        let doc = parse("kerai.prefix\nadd [1 2 3] 4\n");
         let cs = calls(&doc);
         assert_eq!(cs.len(), 1);
         assert_eq!(cs[0].0, "add");
@@ -357,7 +361,7 @@ a b c
     #[test]
     fn calls_skips_nested_apply_args() {
         // calls() should only extract Atom args for backward compat
-        let doc = parse("add (mul 2 3) 4\n");
+        let doc = parse("kerai.prefix\nadd (mul 2 3) 4\n");
         let cs = calls(&doc);
         assert_eq!(cs.len(), 1);
         assert_eq!(cs[0].0, "add");

@@ -588,7 +588,7 @@ mod tests {
             } => {
                 assert_eq!(name, "pg");
                 assert_eq!(target, "postgres");
-                assert_eq!(*notation, Notation::Prefix);
+                assert_eq!(*notation, Notation::Postfix);
             }
             other => panic!("expected Definition, got {other:?}"),
         }
@@ -597,9 +597,9 @@ mod tests {
     #[test]
     fn prefix_call() {
         let mut parser = Parser::new();
-        let doc = parser.parse("postgres.global.connection localhost\n");
-        assert_eq!(doc.lines.len(), 1);
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\npostgres.global.connection localhost\n");
+        assert_eq!(doc.lines.len(), 2);
+        match &doc.lines[1] {
             Line::Call {
                 function,
                 args,
@@ -659,9 +659,9 @@ mod tests {
     fn notation_switch_midfile() {
         let mut parser = Parser::new();
         let doc = parser.parse("a b\nkerai.infix\nc d\nkerai.prefix\ne f\n");
-        // Line 0: prefix call a(b)
+        // Line 0: postfix call b(a) — default is now postfix
         assert!(
-            matches!(&doc.lines[0], Line::Call { function, notation, .. } if function == "a" && *notation == Notation::Prefix)
+            matches!(&doc.lines[0], Line::Call { function, notation, .. } if function == "b" && *notation == Notation::Postfix)
         );
         // Line 1: directive
         assert!(matches!(&doc.lines[1], Line::Directive { .. }));
@@ -706,8 +706,8 @@ mod tests {
     #[test]
     fn quoted_args_in_call() {
         let mut parser = Parser::new();
-        let doc = parser.parse(r#"postgres.global.connection "postgres://localhost/kerai""#);
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\npostgres.global.connection \"postgres://localhost/kerai\"");
+        match &doc.lines[1] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "postgres.global.connection");
                 assert_eq!(args, &[Expr::Atom("postgres://localhost/kerai".into())]);
@@ -787,8 +787,8 @@ mod tests {
     #[test]
     fn prefix_with_paren_group() {
         let mut parser = Parser::new();
-        let doc = parser.parse("add (mul 2 3) 4\n");
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\nadd (mul 2 3) 4\n");
+        match &doc.lines[1] {
             Line::Call {
                 function,
                 args,
@@ -812,9 +812,9 @@ mod tests {
     #[test]
     fn scoped_notation_in_parens() {
         let mut parser = Parser::new();
-        // Default is prefix, but inside parens we switch to postfix
-        let doc = parser.parse("add (kerai.postfix 1 2 +) 4\n");
-        match &doc.lines[0] {
+        // Outer is prefix, inside parens we switch to postfix
+        let doc = parser.parse("kerai.prefix\nadd (kerai.postfix 1 2 +) 4\n");
+        match &doc.lines[1] {
             Line::Call {
                 function,
                 args,
@@ -839,10 +839,10 @@ mod tests {
     #[test]
     fn alias_resolved_directive_in_parens() {
         let mut parser = Parser::new();
-        // Define alias, then use it in a paren group
-        let doc = parser.parse("k: kerai\nadd (k.postfix 1 2 +) 4\n");
-        assert_eq!(doc.lines.len(), 2);
-        match &doc.lines[1] {
+        // Define alias, set prefix mode, then use alias in a paren group
+        let doc = parser.parse("k: kerai\nkerai.prefix\nadd (k.postfix 1 2 +) 4\n");
+        assert_eq!(doc.lines.len(), 3);
+        match &doc.lines[2] {
             Line::Call {
                 function, args, ..
             } => {
@@ -863,11 +863,10 @@ mod tests {
     #[test]
     fn notation_reverts_after_paren_group() {
         let mut parser = Parser::new();
-        // Default prefix. Paren group uses infix. After group, back to prefix.
-        let doc = parser.parse("(kerai.infix 1 + 2)\nadd 3 4\n");
-        // Line 0: paren group parsed as infix
-        // It's a top-level paren group, so the whole line becomes the expression
-        match &doc.lines[0] {
+        // Set prefix. Paren group uses infix. After group, back to prefix.
+        let doc = parser.parse("kerai.prefix\n(kerai.infix 1 + 2)\nadd 3 4\n");
+        // Line 1: paren group parsed as infix
+        match &doc.lines[1] {
             Line::Call {
                 function,
                 args,
@@ -880,8 +879,8 @@ mod tests {
             }
             other => panic!("expected Call for paren group, got {other:?}"),
         }
-        // Line 1: still prefix
-        match &doc.lines[1] {
+        // Line 2: still prefix (reverted after paren group)
+        match &doc.lines[2] {
             Line::Call {
                 function,
                 notation,
@@ -912,8 +911,8 @@ mod tests {
     #[test]
     fn postfix_with_paren_group() {
         let mut parser = Parser::new();
-        let doc = parser.parse("kerai.postfix\n(1 2 mul) 4 add\n");
-        match &doc.lines[1] {
+        let doc = parser.parse("(1 2 mul) 4 add\n");
+        match &doc.lines[0] {
             Line::Call {
                 function, args, ..
             } => {
@@ -956,8 +955,8 @@ mod tests {
     fn postfix_stack_binary_op() {
         // 1 2 + → +(1, 2)
         let mut parser = Parser::new();
-        let doc = parser.parse("kerai.postfix\n1 2 +\n");
-        match &doc.lines[1] {
+        let doc = parser.parse("1 2 +\n");
+        match &doc.lines[0] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "+");
                 assert_eq!(args, &[Expr::Atom("1".into()), Expr::Atom("2".into())]);
@@ -970,8 +969,8 @@ mod tests {
     fn postfix_stack_chained_ops() {
         // 1 2 3 * + → +(1, *(2, 3))
         let mut parser = Parser::new();
-        let doc = parser.parse("kerai.postfix\n1 2 3 * +\n");
-        match &doc.lines[1] {
+        let doc = parser.parse("1 2 3 * +\n");
+        match &doc.lines[0] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "+");
                 assert_eq!(args.len(), 2);
@@ -992,8 +991,8 @@ mod tests {
     fn postfix_with_list() {
         // 1 [2 3 4 5] + → +(1, List([2, 3, 4, 5]))
         let mut parser = Parser::new();
-        let doc = parser.parse("kerai.postfix\n1 [2 3 4 5] +\n");
-        match &doc.lines[1] {
+        let doc = parser.parse("1 [2 3 4 5] +\n");
+        match &doc.lines[0] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "+");
                 assert_eq!(args.len(), 2);
@@ -1016,8 +1015,8 @@ mod tests {
     fn postfix_flat_fallback() {
         // a b c (no known ops) → c(a, b) — flat fallback
         let mut parser = Parser::new();
-        let doc = parser.parse("kerai.postfix\na b c\n");
-        match &doc.lines[1] {
+        let doc = parser.parse("a b c\n");
+        match &doc.lines[0] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "c");
                 assert_eq!(args, &[Expr::Atom("a".into()), Expr::Atom("b".into())]);
@@ -1032,8 +1031,8 @@ mod tests {
     fn prefix_binary_op() {
         // + 1 2 → +(1, 2)
         let mut parser = Parser::new();
-        let doc = parser.parse("+ 1 2\n");
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\n+ 1 2\n");
+        match &doc.lines[1] {
             Line::Call { function, args, notation, .. } => {
                 assert_eq!(function, "+");
                 assert_eq!(*notation, Notation::Prefix);
@@ -1047,8 +1046,8 @@ mod tests {
     fn prefix_nested_ops() {
         // + 1 * 2 3 → +(1, *(2, 3))
         let mut parser = Parser::new();
-        let doc = parser.parse("+ 1 * 2 3\n");
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\n+ 1 * 2 3\n");
+        match &doc.lines[1] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "+");
                 assert_eq!(args.len(), 2);
@@ -1069,8 +1068,8 @@ mod tests {
     fn prefix_with_list() {
         // + 1 [2 3 4 5] → +(1, List([2, 3, 4, 5]))
         let mut parser = Parser::new();
-        let doc = parser.parse("+ 1 [2 3 4 5]\n");
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\n+ 1 [2 3 4 5]\n");
+        match &doc.lines[1] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "+");
                 assert_eq!(args.len(), 2);
@@ -1093,8 +1092,8 @@ mod tests {
     fn prefix_flat_fallback() {
         // foo bar baz (no known ops) → foo(bar, baz) — flat fallback
         let mut parser = Parser::new();
-        let doc = parser.parse("foo bar baz\n");
-        match &doc.lines[0] {
+        let doc = parser.parse("kerai.prefix\nfoo bar baz\n");
+        match &doc.lines[1] {
             Line::Call { function, args, notation, .. } => {
                 assert_eq!(function, "foo");
                 assert_eq!(*notation, Notation::Prefix);
@@ -1110,9 +1109,9 @@ mod tests {
     fn bracket_as_quotation_no_eval() {
         // [1 2 +] → no evaluation inside brackets
         let mut parser = Parser::new();
-        let doc = parser.parse("kerai.postfix\n[1 2 +]\n");
+        let doc = parser.parse("[1 2 +]\n");
         // The whole line is a list — becomes list(List(...))
-        match &doc.lines[1] {
+        match &doc.lines[0] {
             Line::Call { function, args, .. } => {
                 assert_eq!(function, "list");
                 assert_eq!(args.len(), 1);
