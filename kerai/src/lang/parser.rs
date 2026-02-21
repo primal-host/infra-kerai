@@ -19,14 +19,14 @@ pub struct Parser {
 impl Parser {
     pub fn new() -> Self {
         Parser {
-            notation_stack: vec![Notation::Prefix],
+            notation_stack: vec![Notation::Postfix],
             aliases: HashMap::new(),
         }
     }
 
     /// Current notation mode (top of stack).
     fn notation(&self) -> Notation {
-        *self.notation_stack.last().unwrap_or(&Notation::Prefix)
+        *self.notation_stack.last().unwrap_or(&Notation::Postfix)
     }
 
     /// Replace the current notation mode (mutate top of stack).

@@ -17,7 +17,7 @@ pub enum Notation {
 
 impl Default for Notation {
     fn default() -> Self {
-        Notation::Prefix
+        Notation::Postfix
     }
 }
 
@@ -73,7 +73,7 @@ impl Document {
     pub fn new() -> Self {
         Document {
             lines: Vec::new(),
-            default_notation: Notation::Prefix,
+            default_notation: Notation::Postfix,
         }
     }
 }
