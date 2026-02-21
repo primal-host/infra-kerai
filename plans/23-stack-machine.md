@@ -50,17 +50,22 @@ Dispatch is fully late-bound. `edit` doesn't know about CSV — it looks up a ha
 
 ## Stack Persistence
 
+The stack lives in `kerai.workspaces` (see Authentication & Workspaces section for full schema). Each user has multiple named workspaces, each with its own persisted stack:
+
 ```sql
-CREATE TABLE kerai.sessions (
+CREATE TABLE kerai.workspaces (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    TEXT NOT NULL,
+    user_id    UUID NOT NULL REFERENCES kerai.users(id),
+    name       TEXT NOT NULL,
     stack      JSONB NOT NULL DEFAULT '[]',  -- serialized Vec<Ptr>
+    is_active  BOOLEAN DEFAULT false,
     created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (user_id, name)
 );
 ```
 
-Every stack mutation writes through to this row. Push `[1 2 3]` and walk away — reconnect later and it's still on top of the stack. Since the stack only holds pointers (not bulk data), serialization is trivial. The actual data behind referenced pointers is already in Postgres tables — it doesn't go anywhere.
+Every stack mutation writes through to the active workspace row. Push `[1 2 3]` and walk away — reconnect later and it's still on top of the stack. Since the stack only holds pointers (not bulk data), serialization is trivial. The actual data behind referenced pointers is already in Postgres tables — it doesn't go anywhere.
 
 ## Postgres as Universal Backbone
 
@@ -232,6 +237,118 @@ The browser renders each stack item as a card. Card appearance is determined by 
 
 `edit` tells the browser to open an interactive editor for the top card.
 
+## Authentication & Workspaces (First Implementation Target)
+
+This is the first end-to-end implementation — a top-down UX flow that exercises the stack machine, web UI, typed pointer rendering, and Postgres persistence. It guides all subsequent design decisions by making the system real and interactive.
+
+### Login Flow
+
+```
+kerai> login bsky
+```
+
+1. `login` pushes `Ptr { kind: "library", ref_id: "login" }`
+2. `bsky` dispatches — initiates AT Protocol OAuth (DPoP-based), browser redirects to Bluesky authorize page
+3. Callback returns with user's DID, session binds to authenticated user
+4. Pushes `Ptr { kind: "session", ref_id: "did:plc:abc123", meta: { "handle": "you.bsky.social", "provider": "bsky" } }`
+5. Web UI sees `kind: "session"` and renders a user card (handle, avatar, provider)
+
+Auth providers are pluggable — `login bsky`, `login github`, etc. Each is a word in the `login` library. The session table tracks which provider authenticated the user.
+
+### Workspace Management
+
+Once authenticated, the user has workspaces — named, persistent stacks:
+
+```
+kerai> workspace list
+```
+
+1. `workspace` pushes the library pointer
+2. `list` queries `kerai.sessions WHERE user_id = current_did`, pushes `Ptr { kind: "workspace_list", meta: { items: [...] } }`
+3. Web UI sees `kind: "workspace_list"` and renders a numbered selection card:
+   ```
+   1. march-madness-2026    (3 items, last used 2h ago)
+   2. kerai-dev             (12 items, last used yesterday)
+   3. tax-analysis          (empty, created last week)
+   ```
+
+```
+kerai> 5 workspace load
+```
+
+1. `5` pushes `Ptr { kind: "int", ref_id: "5" }`
+2. `workspace` sees an int on the stack, holds it, pushes bound library
+3. `load` pops the library (with bound index), pops the workspace list, selects item 5, replaces the current stack with that workspace's saved stack
+
+Other workspace words:
+- `workspace new "project-name"` — create a fresh workspace
+- `workspace save` — persist the current stack (auto-saves on every mutation anyway)
+- `workspace delete` — delete a workspace
+- `workspace rename "new-name"` — rename the current workspace
+
+### Numbered List Selection Pattern
+
+The `workspace_list` kind establishes a general pattern: any list-type pointer can be rendered as a numbered list by the web UI, and items are selected by pushing an int before the action word. This pattern reuses everywhere:
+
+```
+kerai> postgres "nodes" 10 list     # push a numbered list of 10 nodes
+kerai> 3 show                       # show details of item 3
+```
+
+### Schema
+
+```sql
+CREATE TABLE kerai.users (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    did            TEXT UNIQUE,                  -- "did:plc:abc123"
+    handle         TEXT,                         -- "you.bsky.social"
+    auth_provider  TEXT NOT NULL,                -- "bsky", "github"
+    auth_token     TEXT,                         -- encrypted refresh token
+    created_at     TIMESTAMPTZ DEFAULT now(),
+    last_login     TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE kerai.workspaces (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id        UUID NOT NULL REFERENCES kerai.users(id),
+    name           TEXT NOT NULL,
+    stack          JSONB NOT NULL DEFAULT '[]',  -- serialized Vec<Ptr>
+    is_active      BOOLEAN DEFAULT false,
+    created_at     TIMESTAMPTZ DEFAULT now(),
+    updated_at     TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (user_id, name)
+);
+```
+
+Separated `users` from `workspaces` (was a single `sessions` table). One user has many workspaces. One workspace is active at a time per user. The active workspace's stack is what the web UI displays and the interpreter operates on.
+
+### Auth Endpoints
+
+- **`GET /auth/bsky`** — initiate AT Protocol OAuth, redirect to Bluesky
+- **`GET /auth/callback/bsky`** — handle OAuth callback, create/update user, set session cookie, redirect to app
+- **`GET /auth/me`** — return current user info (or 401)
+- **`POST /auth/logout`** — clear session
+
+### Web UI Flow
+
+1. User visits `kerai.primal.host` — if no session cookie, show login screen with "Sign in with Bluesky" button
+2. OAuth flow completes → redirect back to app with session cookie
+3. App loads, calls `GET /auth/me` to get user info
+4. Calls `POST /api/eval` with `workspace list` to show workspaces
+5. User types `1 workspace load` (or clicks workspace #1) → stack loads
+6. From here, normal stack machine interaction — type words, see results as cards
+
+### Implementation Files
+
+| File | Role |
+|------|------|
+| `kerai/src/serve/auth/mod.rs` | Auth routes, session middleware |
+| `kerai/src/serve/auth/bsky.rs` | AT Protocol OAuth flow (DPoP) |
+| `kerai/src/lang/handlers/login.rs` | `login` library words |
+| `kerai/src/lang/handlers/workspace.rs` | `workspace` library words |
+| `kerai/src/serve/static/index.html` | Login screen + main app shell |
+| `kerai/src/serve/static/app.js` | Stack rendering, card display, input handling |
+
 ## Migration Path from Current Lang Module
 
 1. **Keep** `token.rs` — already handles whitespace-separated words, quoted strings, brackets
@@ -269,11 +386,17 @@ Arithmetic operations pop ptr values, compute, push result. The difference is th
 | `kerai/src/lang/machine.rs` | `Machine` struct, dispatch loop, stack persistence |
 | `kerai/src/lang/handlers/mod.rs` | Handler trait, registry |
 | `kerai/src/lang/handlers/stack.rs` | dup, swap, drop, over, rot, clear |
+| `kerai/src/lang/handlers/login.rs` | `login` library — bsky, github auth words |
+| `kerai/src/lang/handlers/workspace.rs` | `workspace` library — list, load, new, save, delete |
 | `kerai/src/lang/handlers/csv.rs` | csv.import, csv.export |
 | `kerai/src/lang/handlers/query.rs` | sql, table.select, columns.pick |
 | `kerai/src/lang/handlers/io.rs` | project.export, project.import |
+| `kerai/src/serve/auth/mod.rs` | Auth routes, session cookie middleware |
+| `kerai/src/serve/auth/bsky.rs` | AT Protocol OAuth flow (DPoP) |
 | `kerai/src/serve/routes/eval.rs` | POST /api/eval endpoint |
 | `kerai/src/serve/routes/object.rs` | GET /api/object/:kind/:ref_id endpoint |
+| `kerai/src/serve/static/index.html` | Login screen + main app shell |
+| `kerai/src/serve/static/app.js` | Stack rendering, card display, input handling |
 
 ### Modified Files
 
@@ -282,26 +405,20 @@ Arithmetic operations pop ptr values, compute, push result. The difference is th
 | `kerai/src/lang/mod.rs` | Add `pub mod ptr;`, `pub mod machine;`, `pub mod handlers;` |
 | `kerai/src/lang/eval.rs` | Adapt Value → Ptr for arithmetic ops |
 | `kerai/src/serve/mod.rs` | Wire eval/object routes |
-| `postgres/src/schema.rs` | Add `kerai.sessions` DDL |
+| `postgres/src/schema.rs` | Add `kerai.users`, `kerai.workspaces`, `kerai.definitions` DDL |
 
 ### Schema Additions
 
 ```sql
-CREATE TABLE kerai.sessions (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id    TEXT NOT NULL,
-    stack      JSONB NOT NULL DEFAULT '[]',
-    created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
-);
+-- See "Authentication & Workspaces" section for kerai.users and kerai.workspaces
 
 CREATE TABLE kerai.definitions (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    session_id UUID REFERENCES kerai.sessions(id),
-    name       TEXT NOT NULL,
-    body       TEXT NOT NULL,           -- stored as kerai source text
-    created_at TIMESTAMPTZ DEFAULT now(),
-    UNIQUE (session_id, name)
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id UUID REFERENCES kerai.workspaces(id),
+    name         TEXT NOT NULL,
+    body         TEXT NOT NULL,           -- stored as kerai source text
+    created_at   TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (workspace_id, name)
 );
 ```
 
