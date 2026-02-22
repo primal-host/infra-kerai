@@ -131,20 +131,46 @@ impl Machine {
                         }
                     }
 
-                    // 3b. drop.X — targeted drop by index, range, or rowid
-                    if let Some(arg) = word.strip_prefix("drop.") {
-                        if !arg.is_empty() {
-                            if help_mode {
-                                let ptr = match self.help.get("drop") {
-                                    Some(desc) => Ptr::info(desc),
-                                    None => Ptr::warn("drop: no help available"),
-                                };
-                                self.stack.push(ptr);
-                            } else {
-                                self.execute_drop(arg);
-                            }
+                    // 3b. Stack manipulation: drop, fold, view with targeting
+                    let stack_cmd = if word == "drop" || word.starts_with("drop.") {
+                        Some(("drop", word.strip_prefix("drop.").unwrap_or("")))
+                    } else if word == "fold" || word.starts_with("fold.") {
+                        Some(("fold", word.strip_prefix("fold.").unwrap_or("")))
+                    } else if word == "view" || word.starts_with("view.") {
+                        Some(("view", word.strip_prefix("view.").unwrap_or("")))
+                    } else {
+                        None
+                    };
+                    if let Some((cmd, arg)) = stack_cmd {
+                        // cmd.X. (help_mode on a targeted form) → show help
+                        if !arg.is_empty() && help_mode {
+                            let ptr = match self.help.get(cmd) {
+                                Some(desc) => Ptr::info(desc),
+                                None => Ptr::warn(&format!("{}: no help available", cmd)),
+                            };
+                            self.stack.push(ptr);
                             continue;
                         }
+                        // Bare cmd → target top; cmd. (help_mode) → target all
+                        let effective = if arg.is_empty() && !help_mode {
+                            "0"
+                        } else if arg.is_empty() {
+                            ""
+                        } else {
+                            arg
+                        };
+                        match self.resolve_stack_targets(effective) {
+                            Ok(targets) => match cmd {
+                                "drop" => self.apply_drop(targets),
+                                "fold" => self.apply_fold(&targets),
+                                "view" => self.apply_view(&targets),
+                                _ => unreachable!(),
+                            },
+                            Err(e) => {
+                                self.stack.push(Ptr::error(&format!("{}: {}", cmd, e)));
+                            }
+                        }
+                        continue;
                     }
 
                     // 4. Check global handlers
@@ -276,76 +302,94 @@ impl Machine {
         self.stack.push(Ptr::text(&lines.join("\n")));
     }
 
-    /// Execute a targeted drop: by negative index, range, or rowid.
+    /// Resolve a targeting argument into Vec indices.
     ///
     /// Argument forms:
-    ///   "-N"   → drop by relative position (N from top, so -1 = second)
-    ///   "A-B"  → drop range of positions A through B from top (inclusive)
-    ///   "0"    → drop top
-    ///   "N"    → drop by rowid (positive, non-zero)
-    fn execute_drop(&mut self, arg: &str) {
+    ///   ""     → all items
+    ///   "0"    → top item
+    ///   "-N"   → position N from top (-1 = second)
+    ///   "A-B"  → range of positions A through B from top (inclusive)
+    ///   "N"    → item with rowid N (positive, non-zero)
+    fn resolve_stack_targets(&self, arg: &str) -> Result<Vec<usize>, String> {
+        if arg.is_empty() {
+            return Ok((0..self.stack.len()).collect());
+        }
         if let Some(neg) = arg.strip_prefix('-') {
-            // Negative index: -N means position N from top
-            match neg.parse::<usize>() {
-                Ok(n) => {
-                    if n >= self.stack.len() {
-                        self.stack.push(Ptr::error(&format!(
-                            "drop.-{}: out of range (stack depth {})", n, self.stack.len()
-                        )));
-                        return;
-                    }
-                    let idx = self.stack.len() - 1 - n;
-                    self.stack.remove(idx);
+            let n: usize = neg.parse().map_err(|_| format!("invalid index: -{}", neg))?;
+            if n >= self.stack.len() {
+                return Err(format!("position -{} out of range (depth {})", n, self.stack.len()));
+            }
+            return Ok(vec![self.stack.len() - 1 - n]);
+        }
+        if let Some(dash) = arg.find('-') {
+            let start: usize = arg[..dash].parse()
+                .map_err(|_| format!("invalid range: {}", arg))?;
+            let end: usize = arg[dash + 1..].parse()
+                .map_err(|_| format!("invalid range: {}", arg))?;
+            if start > end {
+                return Err("range start must be <= end".into());
+            }
+            if end >= self.stack.len() {
+                return Err(format!("position {} out of range (depth {})", end, self.stack.len()));
+            }
+            let first_idx = self.stack.len() - 1 - end;
+            let count = end - start + 1;
+            return Ok((first_idx..first_idx + count).collect());
+        }
+        let n: i64 = arg.parse().map_err(|_| format!("invalid argument: {}", arg))?;
+        if n == 0 {
+            if self.stack.is_empty() {
+                return Err("stack empty".into());
+            }
+            return Ok(vec![self.stack.len() - 1]);
+        }
+        if n > 0 {
+            let pos = self.stack.iter().position(|p| p.id == n)
+                .ok_or_else(|| format!("rowid {} not found", n))?;
+            return Ok(vec![pos]);
+        }
+        Err(format!("invalid argument: {}", arg))
+    }
+
+    /// Remove items at the given Vec indices.
+    fn apply_drop(&mut self, mut targets: Vec<usize>) {
+        targets.sort_unstable();
+        targets.dedup();
+        for idx in targets.into_iter().rev() {
+            self.stack.remove(idx);
+        }
+    }
+
+    /// Set folded=true on items at the given Vec indices.
+    /// Skips items whose meta is an array (e.g. list kind) to avoid data loss.
+    fn apply_fold(&mut self, targets: &[usize]) {
+        for &idx in targets {
+            if let Some(item) = self.stack.get_mut(idx) {
+                if item.meta.is_array() {
+                    continue; // list items already single-line, skip
                 }
-                Err(_) => {
-                    self.stack.push(Ptr::error(&format!("drop.{}: invalid argument", arg)));
+                if let Some(obj) = item.meta.as_object_mut() {
+                    obj.insert("folded".into(), serde_json::Value::Bool(true));
+                    obj.remove("view");
+                } else {
+                    item.meta = serde_json::json!({"folded": true});
                 }
             }
-        } else if let Some(dash) = arg.find('-') {
-            // Range: A-B (positions from top, inclusive)
-            let start_str = &arg[..dash];
-            let end_str = &arg[dash + 1..];
-            match (start_str.parse::<usize>(), end_str.parse::<usize>()) {
-                (Ok(start), Ok(end)) => {
-                    if start > end {
-                        self.stack.push(Ptr::error("drop: range start must be <= end"));
-                        return;
-                    }
-                    if end >= self.stack.len() {
-                        self.stack.push(Ptr::error(&format!(
-                            "drop.{}-{}: out of range (stack depth {})", start, end, self.stack.len()
-                        )));
-                        return;
-                    }
-                    // Position P from top → Vec index = len - 1 - P
-                    // Remove from lowest Vec index to highest (drain handles it)
-                    let first_idx = self.stack.len() - 1 - end;
-                    let count = end - start + 1;
-                    self.stack.drain(first_idx..first_idx + count);
+        }
+    }
+
+    /// Set view=true (unfold) on items at the given Vec indices.
+    fn apply_view(&mut self, targets: &[usize]) {
+        for &idx in targets {
+            if let Some(item) = self.stack.get_mut(idx) {
+                if item.meta.is_array() {
+                    continue;
                 }
-                _ => {
-                    self.stack.push(Ptr::error(&format!("drop.{}: invalid range", arg)));
-                }
-            }
-        } else {
-            // Positive number: 0 = top, otherwise rowid
-            match arg.parse::<i64>() {
-                Ok(0) => {
-                    if self.stack.is_empty() {
-                        self.stack.push(Ptr::error("drop.0: stack empty"));
-                    } else {
-                        self.stack.pop();
-                    }
-                }
-                Ok(rowid) if rowid > 0 => {
-                    if let Some(pos) = self.stack.iter().position(|p| p.id == rowid) {
-                        self.stack.remove(pos);
-                    } else {
-                        self.stack.push(Ptr::error(&format!("drop.{}: rowid not found", rowid)));
-                    }
-                }
-                _ => {
-                    self.stack.push(Ptr::error(&format!("drop.{}: invalid argument", arg)));
+                if let Some(obj) = item.meta.as_object_mut() {
+                    obj.insert("view".into(), serde_json::Value::Bool(true));
+                    obj.remove("folded");
+                } else {
+                    item.meta = serde_json::json!({"view": true});
                 }
             }
         }
@@ -603,6 +647,89 @@ mod tests {
         m.execute("drop.0.").unwrap();
         assert_eq!(m.stack.len(), 1);
         assert_eq!(m.stack[0].kind, "text.info");
+    }
+
+    #[test]
+    fn drop_dot_wipes_stack() {
+        let mut m = test_machine();
+        m.execute("1 2 3 drop.").unwrap();
+        assert!(m.stack.is_empty());
+    }
+
+    #[test]
+    fn fold_top() {
+        let mut m = test_machine();
+        m.execute("help fold").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert!(m.stack[0].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        // Folded list.help should display as one-line summary
+        let display = m.stack[0].to_string();
+        assert!(display.starts_with("[commands:"));
+    }
+
+    #[test]
+    fn fold_dot_folds_all() {
+        let mut m = test_machine();
+        m.execute("help").unwrap();
+        m.execute("42").unwrap();
+        m.execute("fold.").unwrap();
+        // help (list.help) should be folded
+        assert!(m.stack[0].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        // int has null meta → gets {"folded": true}
+        assert!(m.stack[1].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+    }
+
+    #[test]
+    fn fold_by_position() {
+        let mut m = test_machine();
+        m.execute("10 20 30 fold.-2").unwrap();
+        // Only the bottom item (10) should be folded
+        assert!(m.stack[0].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(!m.stack[1].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(!m.stack[2].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+    }
+
+    #[test]
+    fn view_unfolds() {
+        let mut m = test_machine();
+        m.execute("help fold view").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        // Should be unfolded (view=true, no folded)
+        assert!(m.stack[0].meta.get("view").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(!m.stack[0].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+    }
+
+    #[test]
+    fn view_dot_unfolds_all() {
+        let mut m = test_machine();
+        m.execute("help").unwrap();
+        m.execute("42").unwrap();
+        m.execute("fold.").unwrap();
+        m.execute("view.").unwrap();
+        // Everything should be unfolded
+        assert!(!m.stack[0].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(!m.stack[1].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+    }
+
+    #[test]
+    fn fold_range() {
+        let mut m = test_machine();
+        m.execute("10 20 30 40 fold.0-1").unwrap();
+        // Top two (40, 30) should be folded
+        assert!(m.stack[2].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(m.stack[3].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        // Bottom two untouched
+        assert!(!m.stack[0].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+        assert!(!m.stack[1].meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false));
+    }
+
+    #[test]
+    fn fold_skips_list() {
+        let mut m = test_machine();
+        m.execute("[1 2 3] fold").unwrap();
+        // List meta is an array — fold should skip it, not destroy data
+        assert_eq!(m.stack[0].kind, "list");
+        assert!(m.stack[0].meta.is_array());
     }
 
     #[test]
