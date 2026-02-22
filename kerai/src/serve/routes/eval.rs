@@ -45,8 +45,8 @@ pub async fn eval(
     };
 
     // Build machine with handlers
-    let (handler_map, type_methods) = handlers::register_all();
-    let mut machine = Machine::new(workspace_id, user_id, handler_map, type_methods);
+    let (handler_map, type_methods, help) = handlers::register_all();
+    let mut machine = Machine::new(workspace_id, user_id, handler_map, type_methods, help);
 
     // Load current stack from DB
     match load_stack(&pool, workspace_id).await {

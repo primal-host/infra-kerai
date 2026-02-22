@@ -17,6 +17,8 @@ pub struct Machine {
     /// Type-dispatched methods: (kind, word) → handler.
     /// For library dispatch: ("library:workspace", "list").
     type_methods: HashMap<(String, String), Handler>,
+    /// One-liner help text. Keys: handler name or "library:X/method".
+    help: HashMap<String, String>,
 }
 
 impl Machine {
@@ -25,6 +27,7 @@ impl Machine {
         user_id: uuid::Uuid,
         handlers: HashMap<String, Handler>,
         type_methods: HashMap<(String, String), Handler>,
+        help: HashMap<String, String>,
     ) -> Self {
         Self {
             workspace_id,
@@ -32,6 +35,7 @@ impl Machine {
             stack: Vec::new(),
             handlers,
             type_methods,
+            help,
         }
     }
 
@@ -77,13 +81,26 @@ impl Machine {
                     // Stray structural tokens — ignore
                 }
                 TokenKind::Word => {
-                    let word = &token.value;
+                    let raw = &token.value;
 
                     // 1. Quoted strings are always text literals
                     if token.quoted {
-                        self.stack.push(Ptr::text(word));
+                        self.stack.push(Ptr::text(raw));
                         continue;
                     }
+
+                    // Detect trailing dot → help mode (e.g., "clear." or "admin user allow.")
+                    // Skip for number-like bases so "42." still parses as float 42.0.
+                    let (word, help_mode) = if raw.ends_with('.') && raw.len() > 1 {
+                        let base = &raw[..raw.len() - 1];
+                        if try_parse_number(base).is_some() {
+                            (raw.as_str(), false)
+                        } else {
+                            (base, true)
+                        }
+                    } else {
+                        (raw.as_str(), false)
+                    };
 
                     // 2. Try parse as literal (int, float)
                     if let Some(ptr) = try_parse_number(word) {
@@ -92,7 +109,14 @@ impl Machine {
                     }
 
                     // 3. Check global handlers
-                    if let Some(handler) = self.handlers.get(word.as_str()).copied() {
+                    if let Some(handler) = self.handlers.get(word).copied() {
+                        if help_mode {
+                            let msg = self.help.get(word)
+                                .cloned()
+                                .unwrap_or_else(|| format!("{}: no help available", word));
+                            self.stack.push(Ptr::text(&msg));
+                            continue;
+                        }
                         if let Err(e) = handler(self) {
                             self.stack.push(Ptr::error(&e));
                         }
@@ -101,7 +125,14 @@ impl Machine {
 
                     // 4. Check dot-form: "a.b" → lookup as handler
                     if word.contains('.') {
-                        if let Some(handler) = self.handlers.get(word.as_str()).copied() {
+                        if let Some(handler) = self.handlers.get(word).copied() {
+                            if help_mode {
+                                let msg = self.help.get(word)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!("{}: no help available", word));
+                                self.stack.push(Ptr::text(&msg));
+                                continue;
+                            }
                             if let Err(e) = handler(self) {
                                 self.stack.push(Ptr::error(&e));
                             }
@@ -112,11 +143,28 @@ impl Machine {
                     // 5. If stack top is a library, dispatch as library method
                     if let Some(top) = self.stack.last() {
                         if top.kind == "library" {
-                            let lib_key = format!("library:{}", top.ref_id);
-                            let method_key = (lib_key, word.to_string());
+                            let lib_ref = top.ref_id.clone();
+                            let lib_key = format!("library:{}", lib_ref);
+
+                            // "man" — list all methods for this library
+                            if word == "man" {
+                                self.stack.pop();
+                                self.push_library_man(&lib_ref, &lib_key);
+                                continue;
+                            }
+
+                            let method_key = (lib_key.clone(), word.to_string());
                             if let Some(handler) = self.type_methods.get(&method_key).copied() {
                                 // Pop the library marker before dispatching
                                 self.stack.pop();
+                                if help_mode {
+                                    let help_key = format!("{}/{}", lib_key, word);
+                                    let msg = self.help.get(&help_key)
+                                        .cloned()
+                                        .unwrap_or_else(|| format!("{}.{}: no help available", lib_ref, word));
+                                    self.stack.push(Ptr::text(&msg));
+                                    continue;
+                                }
                                 if let Err(e) = handler(self) {
                                     self.stack.push(Ptr::error(&e));
                                 }
@@ -164,6 +212,27 @@ impl Machine {
     pub fn depth(&self) -> usize {
         self.stack.len()
     }
+
+    /// Push a manual page for a library: lists all its methods with help text.
+    fn push_library_man(&mut self, lib_ref: &str, lib_key: &str) {
+        let prefix = format!("{}/", lib_key);
+        let mut methods: Vec<(&str, &str)> = self.help.iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .map(|(k, v)| (&k[prefix.len()..], v.as_str()))
+            .collect();
+        methods.sort_by_key(|(name, _)| *name);
+
+        let mut lines = vec![format!("{}:", lib_ref)];
+        if methods.is_empty() {
+            lines.push("  (no documented methods)".to_string());
+        } else {
+            let max_len = methods.iter().map(|(n, _)| n.len()).max().unwrap_or(0);
+            for (method, desc) in &methods {
+                lines.push(format!("  .{:<width$} — {}", method, desc, width = max_len));
+            }
+        }
+        self.stack.push(Ptr::text(&lines.join("\n")));
+    }
 }
 
 /// Parse a token value as a literal Ptr (int or float).
@@ -197,8 +266,8 @@ mod tests {
     use crate::lang::handlers;
 
     fn test_machine() -> Machine {
-        let (handlers, type_methods) = handlers::register_all();
-        Machine::new(uuid::Uuid::nil(), uuid::Uuid::nil(), handlers, type_methods)
+        let (handlers, type_methods, help) = handlers::register_all();
+        Machine::new(uuid::Uuid::nil(), uuid::Uuid::nil(), handlers, type_methods, help)
     }
 
     #[test]
@@ -335,5 +404,71 @@ mod tests {
         m.execute("2 3 + 4 *").unwrap();
         assert_eq!(m.stack.len(), 1);
         assert_eq!(m.stack[0], Ptr::int(20));
+    }
+
+    #[test]
+    fn help_global_handler() {
+        let mut m = test_machine();
+        m.execute("clear.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "clear the stack");
+    }
+
+    #[test]
+    fn help_library_pusher() {
+        let mut m = test_machine();
+        m.execute("admin.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "administration commands");
+    }
+
+    #[test]
+    fn help_library_method() {
+        let mut m = test_machine();
+        m.execute("admin user allow.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "allowlist a bsky handle for login");
+    }
+
+    #[test]
+    fn help_does_not_execute() {
+        // "allow." should show help, not try to pop a handle from the stack
+        let mut m = test_machine();
+        m.execute("admin user allow.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text"); // help text, not error
+    }
+
+    #[test]
+    fn help_preserves_float() {
+        // "42." should parse as float 42.0, not trigger help mode
+        let mut m = test_machine();
+        m.execute("42.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "float");
+    }
+
+    #[test]
+    fn man_library() {
+        let mut m = test_machine();
+        m.execute("admin man").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert!(m.stack[0].ref_id.contains("admin:"));
+        assert!(m.stack[0].ref_id.contains(".oauth"));
+        assert!(m.stack[0].ref_id.contains(".user"));
+    }
+
+    #[test]
+    fn man_nested_library() {
+        let mut m = test_machine();
+        m.execute("admin user man").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert!(m.stack[0].ref_id.contains("admin.user:"));
+        assert!(m.stack[0].ref_id.contains(".allow"));
     }
 }

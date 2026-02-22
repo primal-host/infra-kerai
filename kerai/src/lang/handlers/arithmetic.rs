@@ -104,8 +104,8 @@ mod tests {
     use crate::lang::handlers::register_all;
 
     fn make_machine() -> Machine {
-        let (handlers, type_methods) = register_all();
-        Machine::new(uuid::Uuid::nil(), uuid::Uuid::nil(), handlers, type_methods)
+        let (handlers, type_methods, help) = register_all();
+        Machine::new(uuid::Uuid::nil(), uuid::Uuid::nil(), handlers, type_methods, help)
     }
 
     #[test]

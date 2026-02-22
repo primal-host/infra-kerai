@@ -74,8 +74,8 @@ mod tests {
     use super::*;
 
     fn make_stack(items: Vec<Ptr>) -> Machine {
-        let (handlers, type_methods) = crate::lang::handlers::register_all();
-        let mut m = Machine::new(uuid::Uuid::nil(), uuid::Uuid::nil(), handlers, type_methods);
+        let (handlers, type_methods, help) = crate::lang::handlers::register_all();
+        let mut m = Machine::new(uuid::Uuid::nil(), uuid::Uuid::nil(), handlers, type_methods, help);
         m.stack = items;
         m
     }
