@@ -64,6 +64,15 @@ impl Ptr {
         }
     }
 
+    pub fn help_list(items: Vec<serde_json::Value>) -> Self {
+        Self {
+            kind: "list.help".into(),
+            ref_id: String::new(),
+            meta: serde_json::json!({"items": items}),
+            id: 0,
+        }
+    }
+
     pub fn library(name: &str) -> Self {
         Self {
             kind: "library".into(),
@@ -142,6 +151,46 @@ impl fmt::Display for Ptr {
                     write!(f, "workspaces:\n{}", lines.join("\n"))
                 } else {
                     write!(f, "workspaces: (none)")
+                }
+            }
+            "list.help" => {
+                if let Some(items) = self.meta.get("items").and_then(|v| v.as_array()) {
+                    let entries: Vec<(&str, &str)> = items.iter()
+                        .filter_map(|item| {
+                            let path = item.get("path")?.as_str()?;
+                            let desc = item.get("desc")?.as_str()?;
+                            Some((path, desc))
+                        })
+                        .collect();
+                    if entries.is_empty() {
+                        return write!(f, "commands: (none)");
+                    }
+                    let mut lines = vec!["commands:".to_string()];
+                    // Track ancestor stack for nesting
+                    let mut ancestors: Vec<&str> = Vec::new();
+                    for (path, desc) in &entries {
+                        // Pop ancestors that aren't a prefix of current path
+                        while let Some(&top) = ancestors.last() {
+                            if path.starts_with(top) && path.as_bytes().get(top.len()) == Some(&b'.') {
+                                break;
+                            }
+                            ancestors.pop();
+                        }
+                        let depth = ancestors.len();
+                        let indent = "  ".repeat(depth + 1);
+                        let label = if depth > 0 {
+                            // Show only the last segment prefixed with "."
+                            let last_dot = path.rfind('.').unwrap();
+                            format!(".{}", &path[last_dot + 1..])
+                        } else {
+                            path.to_string()
+                        };
+                        lines.push(format!("{}{} — {}", indent, label, desc));
+                        ancestors.push(path);
+                    }
+                    write!(f, "{}", lines.join("\n"))
+                } else {
+                    write!(f, "commands: (none)")
                 }
             }
             "session" => {
