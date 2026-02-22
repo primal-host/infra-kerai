@@ -14,10 +14,8 @@ fi
 # Build release binary
 CARGO_TARGET_DIR="$(pwd)/tgt" cargo build --release -p kerai-cli
 
-# Install binary
-sudo cp tgt/release/kerai /usr/local/bin/kerai
+# Install binary (kerai in /usr/local/bin is chown'd to primal:staff)
+cp tgt/release/kerai /usr/local/bin/kerai
 
-# Restart launchd service
-sudo launchctl bootout system/com.primal.kerai 2>/dev/null || true
-sudo cp com.primal.kerai.plist /Library/LaunchDaemons/
-sudo launchctl bootstrap system/ /Library/LaunchDaemons/com.primal.kerai.plist
+# Restart — launchd auto-restarts via KeepAlive
+kill $(pgrep -f '/usr/local/bin/kerai serve') 2>/dev/null || true
