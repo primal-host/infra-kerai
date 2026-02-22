@@ -10,6 +10,7 @@ use crate::lang::machine::Machine;
 use crate::lang::ptr::Ptr;
 use crate::serve::auth;
 use crate::serve::db::Pool;
+use crate::serve::oauth::{self, OAuthConfig};
 
 #[derive(Deserialize)]
 pub struct EvalRequest {
@@ -336,15 +337,124 @@ async fn resolve_requests(machine: &mut Machine, pool: &Pool) {
                 }
             }
             "auth_pending_request" => {
-                machine.stack[i] = Ptr {
-                    kind: "auth_pending".into(),
-                    ref_id: "bsky".into(),
-                    meta: serde_json::json!({
-                        "url": "/auth/bsky/start",
-                        "message": "Bluesky OAuth coming soon"
-                    }),
-                    id: 0,
+                // Load OAuth config from DB
+                let config_rows = client
+                    .query(
+                        "SELECT key, value FROM kerai.config WHERE key LIKE 'oauth.bsky.%' OR key = 'public_url'",
+                        &[],
+                    )
+                    .await;
+
+                match config_rows {
+                    Ok(rows) if !rows.is_empty() => {
+                        let pairs: Vec<(String, String)> = rows
+                            .iter()
+                            .map(|r| (r.get::<_, String>(0), r.get::<_, String>(1)))
+                            .collect();
+
+                        match OAuthConfig::from_config_rows(&pairs) {
+                            Ok(config) => {
+                                // Resolve handle → DID → auth server
+                                match oauth::resolve_handle("bsky.social").await {
+                                    Ok(did) => {
+                                        match oauth::discover_auth_server(&did).await {
+                                            Ok(auth_meta) => {
+                                                let (code_verifier, code_challenge) = oauth::generate_pkce();
+                                                let state = oauth::generate_state();
+
+                                                match oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state).await {
+                                                    Ok(authorize_url) => {
+                                                        // Find the actual session token
+                                                        let token_row = client
+                                                            .query_opt(
+                                                                "SELECT token FROM kerai.sessions WHERE user_id = $1 AND workspace_id = $2",
+                                                                &[&machine.user_id, &machine.workspace_id],
+                                                            )
+                                                            .await;
+
+                                                        let sess_token = match token_row {
+                                                            Ok(Some(r)) => r.get::<_, String>(0),
+                                                            _ => String::new(),
+                                                        };
+
+                                                        // Store oauth state
+                                                        let _ = client
+                                                            .execute(
+                                                                "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, did, token_endpoint) \
+                                                                 VALUES ($1, $2, $3, $4, $5)",
+                                                                &[&state, &code_verifier, &sess_token, &did, &auth_meta.token_endpoint],
+                                                            )
+                                                            .await;
+
+                                                        machine.stack[i] = Ptr {
+                                                            kind: "auth_pending".into(),
+                                                            ref_id: "bsky".into(),
+                                                            meta: serde_json::json!({
+                                                                "url": authorize_url,
+                                                            }),
+                                                            id: 0,
+                                                        };
+                                                    }
+                                                    Err(e) => {
+                                                        machine.stack[i] = Ptr::error(&format!("PAR failed: {e}"));
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                machine.stack[i] = Ptr::error(&format!("auth server discovery failed: {e}"));
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        machine.stack[i] = Ptr::error(&format!("handle resolution failed: {e}"));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                machine.stack[i] = Ptr::error(&format!("OAuth config invalid: {e}"));
+                            }
+                        }
+                    }
+                    _ => {
+                        machine.stack[i] = Ptr::error("OAuth not configured. Run 'admin oauth setup bsky' first.");
+                    }
+                }
+            }
+            "admin_oauth_setup_request" => {
+                // Generate ES256 keypair
+                let (private_key_pem, public_jwk_json) = OAuthConfig::generate_keypair();
+
+                // Get or default public_url
+                let public_url = match client
+                    .query_opt("SELECT value FROM kerai.config WHERE key = 'public_url'", &[])
+                    .await
+                {
+                    Ok(Some(row)) => row.get::<_, String>(0),
+                    _ => "https://ker.ai".to_string(),
                 };
+
+                // Store in kerai.config (upsert)
+                let upsert = "INSERT INTO kerai.config (key, value, updated_at) VALUES ($1, $2, now()) \
+                              ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = now()";
+
+                let results = futures::future::join3(
+                    client.execute(upsert, &[&"oauth.bsky.private_key", &private_key_pem]),
+                    client.execute(upsert, &[&"oauth.bsky.public_jwk", &public_jwk_json]),
+                    client.execute(upsert, &[&"public_url", &public_url]),
+                )
+                .await;
+
+                if results.0.is_err() || results.1.is_err() || results.2.is_err() {
+                    machine.stack[i] = Ptr::error("failed to store OAuth config");
+                } else {
+                    let client_id = format!("{}/.well-known/oauth-client-metadata", public_url);
+                    machine.stack[i] = Ptr {
+                        kind: "text".into(),
+                        ref_id: format!("OAuth configured. client_id: {}", client_id),
+                        meta: serde_json::Value::Null,
+                        id: 0,
+                    };
+                }
             }
             _ => {}
         }

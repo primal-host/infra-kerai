@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod arithmetic;
 pub mod login;
 pub mod stack_ops;
@@ -33,6 +34,7 @@ pub fn register_all() -> (HashMap<String, Handler>, HashMap<(String, String), Ha
     // Library pushers
     handlers.insert("workspace".into(), workspace::workspace_lib);
     handlers.insert("login".into(), login::login_lib);
+    handlers.insert("admin".into(), admin::admin_lib);
 
     // Workspace library methods
     type_methods.insert(
@@ -56,6 +58,20 @@ pub fn register_all() -> (HashMap<String, Handler>, HashMap<(String, String), Ha
     type_methods.insert(
         ("library:login".into(), "bsky".into()),
         login::login_bsky,
+    );
+
+    // Admin library methods
+    type_methods.insert(
+        ("library:admin".into(), "oauth".into()),
+        admin::admin_oauth,
+    );
+    type_methods.insert(
+        ("library:admin.oauth".into(), "setup".into()),
+        admin::admin_oauth_setup,
+    );
+    type_methods.insert(
+        ("library:admin.oauth.setup".into(), "bsky".into()),
+        admin::admin_oauth_setup_bsky,
     );
 
     (handlers, type_methods)

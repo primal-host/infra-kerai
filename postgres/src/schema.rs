@@ -845,3 +845,35 @@ CREATE INDEX idx_csv_files_project ON kerai.csv_files (project_id);
     name = "table_csv_files",
     requires = ["table_csv_projects"]
 );
+
+// Table: oauth_state — temporary OAuth flow state
+extension_sql!(
+    r#"
+CREATE TABLE kerai.oauth_state (
+    state          TEXT PRIMARY KEY,
+    code_verifier  TEXT NOT NULL,
+    session_token  TEXT NOT NULL,
+    handle         TEXT,
+    did            TEXT,
+    token_endpoint TEXT NOT NULL,
+    dpop_nonce     TEXT,
+    created_at     TIMESTAMPTZ DEFAULT now(),
+    expires_at     TIMESTAMPTZ DEFAULT now() + interval '10 minutes'
+);
+"#,
+    name = "table_oauth_state",
+    requires = ["schema_bootstrap"]
+);
+
+// Table: config — global key-value config
+extension_sql!(
+    r#"
+CREATE TABLE kerai.config (
+    key        TEXT PRIMARY KEY,
+    value      TEXT NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+"#,
+    name = "table_config",
+    requires = ["schema_bootstrap"]
+);

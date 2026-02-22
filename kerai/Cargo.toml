@@ -30,3 +30,7 @@ futures = "0.3"
 reqwest = { version = "0.12", features = ["json"] }
 rand = "0.8"
 base64 = "0.22"
+sha2 = "0.10"
+p256 = { version = "0.13", features = ["jwk", "ecdsa"] }
+jsonwebtoken = "9"
+url = "2"

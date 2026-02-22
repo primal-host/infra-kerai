@@ -2,6 +2,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod notify;
+pub mod oauth;
 pub mod routes;
 
 use tower_http::cors::CorsLayer;

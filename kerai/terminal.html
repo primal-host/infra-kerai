@@ -156,12 +156,12 @@ async function sendEval(expr){
     const data=await res.json();
     renderStack(data.stack);
 
-    // Check for workspace switch — update status
-    // If the last item is auth_pending, could redirect
+    // Check for auth_pending — redirect to OAuth
     if(data.stack&&data.stack.length>0){
       const last=data.stack[data.stack.length-1];
       if(last.kind==='auth_pending'&&last.meta&&last.meta.url){
-        // Could auto-redirect: window.location.href=last.meta.url;
+        window.location.href=last.meta.url;
+        return;
       }
     }
 
@@ -202,7 +202,7 @@ async function handleSubmit(){
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Stack commands: dup drop swap over rot clear depth view</span></div>',
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Arithmetic: + - * / %</span></div>',
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Literals: integers, floats, hex (0xFF), "quoted strings", [lists]</span></div>',
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Libraries: workspace (list/load/new/save), login (bsky)</span></div>',
+      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Libraries: workspace (list/load/new/save), login (bsky), admin (oauth setup bsky)</span></div>',
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Commands: help, clear (local)</span></div>'
     ].join('');
     return;
@@ -213,10 +213,19 @@ async function handleSubmit(){
 
 function doLogin(){
   if(session&&session.auth_provider!=='anonymous'){
-    // Already logged in — could show profile or logout
-    sendEval('login bsky');
+    doLogout();
   }else{
     sendEval('login bsky');
+  }
+}
+
+async function doLogout(){
+  try{
+    await fetch('/auth/logout',{method:'POST',credentials:'include'});
+    document.cookie='kerai_session=;path=/;max-age=0';
+    window.location.reload();
+  }catch(e){
+    stackArea.innerHTML='<div class="stack-empty">error: logout failed</div>';
   }
 }
 

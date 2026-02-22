@@ -75,6 +75,12 @@ pub fn build_router(pool: Arc<Pool>, notify_tx: broadcast::Sender<String>) -> Ro
         .route("/eval", post(eval::eval))
         .with_state(pool.clone());
 
+    // OAuth metadata routes (top-level, not nested)
+    let oauth_meta_router = Router::new()
+        .route("/.well-known/oauth-client-metadata", get(auth::client_metadata))
+        .route("/oauth/jwks.json", get(auth::jwks))
+        .with_state(pool.clone());
+
     // Auth routes
     let auth_router = Router::new()
         .route("/session", get(auth::get_session))
@@ -85,6 +91,7 @@ pub fn build_router(pool: Arc<Pool>, notify_tx: broadcast::Sender<String>) -> Ro
 
     Router::new()
         .route("/", get(eval::terminal_page))
+        .merge(oauth_meta_router)
         .nest("/api", api)
         .nest("/api", ws_router)
         .nest("/api", eval_router)
