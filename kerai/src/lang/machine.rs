@@ -114,7 +114,7 @@ impl Machine {
                             let msg = self.help.get("help")
                                 .cloned()
                                 .unwrap_or_else(|| "list all commands".into());
-                            self.stack.push(Ptr::text(&msg));
+                            self.stack.push(Ptr::info(&msg));
                         } else {
                             self.push_help_list();
                         }
@@ -125,8 +125,8 @@ impl Machine {
                         .or_else(|| word.strip_suffix(".help"));
                     if let Some(path) = help_path {
                         if !path.is_empty() {
-                            let msg = self.lookup_help_text(path);
-                            self.stack.push(Ptr::text(&msg));
+                            let ptr = self.lookup_help_text(path);
+                            self.stack.push(ptr);
                             continue;
                         }
                     }
@@ -134,10 +134,11 @@ impl Machine {
                     // 4. Check global handlers
                     if let Some(handler) = self.handlers.get(word).copied() {
                         if help_mode {
-                            let msg = self.help.get(word)
-                                .cloned()
-                                .unwrap_or_else(|| format!("{}: no help available", word));
-                            self.stack.push(Ptr::text(&msg));
+                            let ptr = match self.help.get(word) {
+                                Some(desc) => Ptr::info(desc),
+                                None => Ptr::warn(&format!("{}: no help available", word)),
+                            };
+                            self.stack.push(ptr);
                             continue;
                         }
                         if let Err(e) = handler(self) {
@@ -150,10 +151,11 @@ impl Machine {
                     if word.contains('.') {
                         if let Some(handler) = self.handlers.get(word).copied() {
                             if help_mode {
-                                let msg = self.help.get(word)
-                                    .cloned()
-                                    .unwrap_or_else(|| format!("{}: no help available", word));
-                                self.stack.push(Ptr::text(&msg));
+                                let ptr = match self.help.get(word) {
+                                    Some(desc) => Ptr::info(desc),
+                                    None => Ptr::warn(&format!("{}: no help available", word)),
+                                };
+                                self.stack.push(ptr);
                                 continue;
                             }
                             if let Err(e) = handler(self) {
@@ -182,10 +184,11 @@ impl Machine {
                                 self.stack.pop();
                                 if help_mode {
                                     let help_key = format!("{}/{}", lib_key, word);
-                                    let msg = self.help.get(&help_key)
-                                        .cloned()
-                                        .unwrap_or_else(|| format!("{}.{}: no help available", lib_ref, word));
-                                    self.stack.push(Ptr::text(&msg));
+                                    let ptr = match self.help.get(&help_key) {
+                                        Some(desc) => Ptr::info(desc),
+                                        None => Ptr::warn(&format!("{}.{}: no help available", lib_ref, word)),
+                                    };
+                                    self.stack.push(ptr);
                                     continue;
                                 }
                                 if let Err(e) = handler(self) {
@@ -259,10 +262,11 @@ impl Machine {
 
     /// Look up help text for a dot-path like "admin.user.allow".
     /// Tries direct handler key first, then library key format.
-    fn lookup_help_text(&self, path: &str) -> String {
+    /// Returns info Ptr on match, warn Ptr on miss.
+    fn lookup_help_text(&self, path: &str) -> Ptr {
         // Direct match (global handlers: "dup", "clear", "admin", etc.)
         if let Some(desc) = self.help.get(path) {
-            return desc.clone();
+            return Ptr::info(desc);
         }
         // Library format: "admin.user.allow" → "library:admin.user/allow"
         if let Some(dot_pos) = path.rfind('.') {
@@ -270,10 +274,10 @@ impl Machine {
             let method = &path[dot_pos + 1..];
             let key = format!("library:{}/{}", lib_part, method);
             if let Some(desc) = self.help.get(&key) {
-                return desc.clone();
+                return Ptr::info(desc);
             }
         }
-        format!("{}: no help available", path)
+        Ptr::warn(&format!("{}: no help available", path))
     }
 
     /// Push a structured list of all registered commands as a `list.help` Ptr.
@@ -477,7 +481,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("clear.").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "clear the stack");
     }
 
@@ -486,7 +490,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("admin.").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "administration commands");
     }
 
@@ -495,7 +499,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("admin user allow.").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "allowlist a bsky handle for login");
     }
 
@@ -505,7 +509,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("admin user allow.").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text"); // help text, not error
+        assert_eq!(m.stack[0].kind, "text.info"); // help text, not error
     }
 
     #[test]
@@ -542,7 +546,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("help.").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "list all commands");
     }
 
@@ -551,7 +555,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("help.clear").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "clear the stack");
     }
 
@@ -560,7 +564,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("help.admin").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "administration commands");
     }
 
@@ -569,7 +573,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("help.admin.user.allow").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "allowlist a bsky handle for login");
     }
 
@@ -578,7 +582,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("help.admin.oauth.setup.bsky").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "generate ES256 keypair for Bluesky OAuth");
     }
 
@@ -587,7 +591,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("help.nonexistent").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.warn");
         assert_eq!(m.stack[0].ref_id, "nonexistent: no help available");
     }
 
@@ -596,7 +600,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("clear.help").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "clear the stack");
     }
 
@@ -605,7 +609,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("admin.help").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "administration commands");
     }
 
@@ -614,7 +618,7 @@ mod tests {
         let mut m = test_machine();
         m.execute("admin.user.allow.help").unwrap();
         assert_eq!(m.stack.len(), 1);
-        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].kind, "text.info");
         assert_eq!(m.stack[0].ref_id, "allowlist a bsky handle for login");
     }
 
