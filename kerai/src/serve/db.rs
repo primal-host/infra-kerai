@@ -9,13 +9,27 @@ use super::config::Config;
 pub struct Pool {
     config: Config,
     client: Mutex<Option<Client>>,
+    pg_host: String,
 }
 
 impl Pool {
     pub fn new(config: Config) -> Arc<Self> {
+        let raw_host = parse_host(&config.database_url);
+        let pg_host = if raw_host.starts_with('/') {
+            // Unix socket — resolve to system hostname
+            std::process::Command::new("hostname")
+                .output()
+                .ok()
+                .and_then(|o| String::from_utf8(o.stdout).ok())
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "localhost".into())
+        } else {
+            raw_host
+        };
         Arc::new(Self {
             config,
             client: Mutex::new(None),
+            pg_host,
         })
     }
 
@@ -40,20 +54,9 @@ impl Pool {
         self.connect().await
     }
 
-    /// Extract postgres host from connection string.
+    /// Postgres host name (resolved at startup).
     pub fn pg_host(&self) -> &str {
-        let url = &self.config.database_url;
-        // Key=value format: "host=/tmp dbname=kerai"
-        if let Some(pos) = url.find("host=") {
-            let rest = &url[pos + 5..];
-            rest.split_whitespace().next().unwrap_or("?")
-        // URI format: "postgresql://user:pass@host:port/db"
-        } else if let Some(at) = url.find('@') {
-            let rest = &url[at + 1..];
-            rest.split(&[':', '/'][..]).next().unwrap_or("?")
-        } else {
-            "localhost"
-        }
+        &self.pg_host
     }
 
     async fn connect(&self) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
@@ -68,4 +71,18 @@ impl Pool {
 
         Ok(client)
     }
+}
+
+fn parse_host(url: &str) -> String {
+    // Key=value format: "host=/tmp dbname=kerai"
+    if let Some(pos) = url.find("host=") {
+        let rest = &url[pos + 5..];
+        return rest.split_whitespace().next().unwrap_or("localhost").to_string();
+    }
+    // URI format: "postgresql://user:pass@host:port/db"
+    if let Some(at) = url.find('@') {
+        let rest = &url[at + 1..];
+        return rest.split(&[':', '/'][..]).next().unwrap_or("localhost").to_string();
+    }
+    "localhost".into()
 }
