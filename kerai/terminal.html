@@ -64,6 +64,17 @@ let savedInput='';
 
 // Initialize session
 async function initSession(){
+  // Check for error params (e.g. rejected login)
+  const params=new URLSearchParams(window.location.search);
+  const err=params.get('error');
+  if(err){
+    if(err==='not_allowed'){
+      stackArea.innerHTML='<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-error">error: access denied — your account has not been allowlisted by the admin</span></div>';
+    }else{
+      stackArea.innerHTML='<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-error">error: '+err+'</span></div>';
+    }
+    window.history.replaceState({},'','/');
+  }
   try{
     const res=await fetch('/auth/session',{credentials:'include'});
     session=await res.json();
@@ -202,7 +213,7 @@ async function handleSubmit(){
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Stack commands: dup drop swap over rot clear depth view</span></div>',
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Arithmetic: + - * / %</span></div>',
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Literals: integers, floats, hex (0xFF), "quoted strings", [lists]</span></div>',
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Libraries: workspace (list/load/new/save), login (bsky), admin (oauth setup bsky)</span></div>',
+      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Libraries: workspace (list/load/new/save), login (bsky), admin (oauth setup bsky, user allow)</span></div>',
       '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Commands: help, clear (local)</span></div>'
     ].join('');
     return;

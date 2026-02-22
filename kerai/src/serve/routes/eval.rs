@@ -359,8 +359,9 @@ async fn resolve_requests(machine: &mut Machine, pool: &Pool) {
                                     Ok(auth_meta) => {
                                         let (code_verifier, code_challenge) = oauth::generate_pkce();
                                         let state = oauth::generate_state();
+                                        let (dpop_key, dpop_key_b64) = oauth::generate_dpop_key();
 
-                                        match oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state).await {
+                                        match oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state, &dpop_key).await {
                                             Ok(authorize_url) => {
                                                 // Find the actual session token
                                                 let token_row = client
@@ -375,12 +376,12 @@ async fn resolve_requests(machine: &mut Machine, pool: &Pool) {
                                                     _ => String::new(),
                                                 };
 
-                                                // Store oauth state
+                                                // Store oauth state with ephemeral DPoP key
                                                 let _ = client
                                                     .execute(
-                                                        "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, token_endpoint, issuer) \
-                                                         VALUES ($1, $2, $3, $4, $5)",
-                                                        &[&state, &code_verifier, &sess_token, &auth_meta.token_endpoint, &auth_meta.issuer],
+                                                        "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, token_endpoint, issuer, dpop_key) \
+                                                         VALUES ($1, $2, $3, $4, $5, $6)",
+                                                        &[&state, &code_verifier, &sess_token, &auth_meta.token_endpoint, &auth_meta.issuer, &dpop_key_b64],
                                                     )
                                                     .await;
 
@@ -413,7 +414,126 @@ async fn resolve_requests(machine: &mut Machine, pool: &Pool) {
                     }
                 }
             }
+            "admin_user_allow_request" => {
+                let handle = machine.stack[i].ref_id.clone();
+                let user_id = machine.user_id;
+
+                // Check if requesting user is admin
+                let is_admin: bool = match client
+                    .query_one(
+                        "SELECT is_admin FROM kerai.users WHERE id = $1",
+                        &[&user_id],
+                    )
+                    .await
+                {
+                    Ok(row) => row.get(0),
+                    Err(_) => false,
+                };
+
+                if !is_admin {
+                    machine.stack[i] = Ptr::error("permission denied: admin only");
+                } else {
+                    // Check if user already exists
+                    match client
+                        .query_opt(
+                            "SELECT id, is_allowed, did FROM kerai.users WHERE handle = $1",
+                            &[&handle],
+                        )
+                        .await
+                    {
+                        Ok(Some(row)) => {
+                            let is_allowed: bool = row.get(1);
+                            let did: Option<String> = row.get(2);
+                            if is_allowed {
+                                machine.stack[i] = Ptr {
+                                    kind: "text".into(),
+                                    ref_id: format!("{} is already allowed", handle),
+                                    meta: serde_json::Value::Null,
+                                    id: 0,
+                                };
+                            } else {
+                                let target_id: uuid::Uuid = row.get(0);
+                                match client
+                                    .execute(
+                                        "UPDATE kerai.users SET is_allowed = true WHERE id = $1",
+                                        &[&target_id],
+                                    )
+                                    .await
+                                {
+                                    Ok(_) => {
+                                        let status = if did.is_some() { "allowed" } else { "allowlisted (pending login)" };
+                                        machine.stack[i] = Ptr {
+                                            kind: "text".into(),
+                                            ref_id: format!("{} {}", handle, status),
+                                            meta: serde_json::Value::Null,
+                                            id: 0,
+                                        };
+                                    }
+                                    Err(e) => {
+                                        machine.stack[i] = Ptr::error(&format!("allow failed: {e}"));
+                                    }
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // Insert placeholder row with handle + is_allowed=true
+                            match client
+                                .execute(
+                                    "INSERT INTO kerai.users (handle, auth_provider, is_allowed) \
+                                     VALUES ($1, 'bsky', true)",
+                                    &[&handle],
+                                )
+                                .await
+                            {
+                                Ok(_) => {
+                                    machine.stack[i] = Ptr {
+                                        kind: "text".into(),
+                                        ref_id: format!("{} allowlisted (pending login)", handle),
+                                        meta: serde_json::Value::Null,
+                                        id: 0,
+                                    };
+                                }
+                                Err(e) => {
+                                    machine.stack[i] = Ptr::error(&format!("allow failed: {e}"));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            machine.stack[i] = Ptr::error(&format!("allow lookup failed: {e}"));
+                        }
+                    }
+                }
+            }
             "admin_oauth_setup_request" => {
+                // Admin guard: allow if user is admin or no admin exists yet (bootstrap)
+                let user_id = machine.user_id;
+                let is_admin: bool = match client
+                    .query_one(
+                        "SELECT is_admin FROM kerai.users WHERE id = $1",
+                        &[&user_id],
+                    )
+                    .await
+                {
+                    Ok(row) => row.get(0),
+                    Err(_) => false,
+                };
+                let has_any_admin: bool = match client
+                    .query_one(
+                        "SELECT EXISTS(SELECT 1 FROM kerai.users WHERE is_admin = true)",
+                        &[],
+                    )
+                    .await
+                {
+                    Ok(row) => row.get(0),
+                    Err(_) => false,
+                };
+
+                if !is_admin && has_any_admin {
+                    machine.stack[i] = Ptr::error("permission denied: admin only");
+                    i += 1;
+                    continue;
+                }
+
                 // Generate ES256 keypair
                 let (private_key_pem, public_jwk_json) = OAuthConfig::generate_keypair();
 

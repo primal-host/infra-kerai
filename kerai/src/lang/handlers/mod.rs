@@ -73,6 +73,14 @@ pub fn register_all() -> (HashMap<String, Handler>, HashMap<(String, String), Ha
         ("library:admin.oauth.setup".into(), "bsky".into()),
         admin::admin_oauth_setup_bsky,
     );
+    type_methods.insert(
+        ("library:admin".into(), "user".into()),
+        admin::admin_user,
+    );
+    type_methods.insert(
+        ("library:admin.user".into(), "allow".into()),
+        admin::admin_user_allow,
+    );
 
     (handlers, type_methods)
 }

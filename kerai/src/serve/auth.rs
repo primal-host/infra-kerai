@@ -5,6 +5,7 @@ use axum::Json;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+use tracing::{error, info};
 use uuid::Uuid;
 
 use super::db::Pool;
@@ -17,6 +18,7 @@ pub struct SessionInfo {
     pub workspace_name: String,
     pub handle: Option<String>,
     pub auth_provider: String,
+    pub is_admin: bool,
     pub token: String,
 }
 
@@ -76,6 +78,7 @@ pub async fn get_session(
         workspace_name: ws_name,
         handle: None,
         auth_provider: "anonymous".into(),
+        is_admin: false,
         token,
     }))
 }
@@ -119,12 +122,13 @@ pub async fn bsky_start(
         (None, meta)
     };
 
-    // Generate PKCE
+    // Generate PKCE + ephemeral DPoP key (must be distinct from client JWKS key)
     let (code_verifier, code_challenge) = oauth::generate_pkce();
     let state = oauth::generate_state();
+    let (dpop_key, dpop_key_b64) = oauth::generate_dpop_key();
 
     // PAR → authorize URL
-    let authorize_url = oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state)
+    let authorize_url = oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state, &dpop_key)
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("PAR failed: {e}")))?;
 
@@ -133,8 +137,8 @@ pub async fn bsky_start(
     let did_ref: Option<&str> = None;
     client
         .execute(
-            "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, handle, did, token_endpoint, issuer) \
-             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, handle, did, token_endpoint, issuer, dpop_key) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
             &[
                 &state,
                 &code_verifier,
@@ -143,6 +147,7 @@ pub async fn bsky_start(
                 &did_ref,
                 &auth_meta.token_endpoint,
                 &auth_meta.issuer,
+                &dpop_key_b64,
             ],
         )
         .await
@@ -164,20 +169,29 @@ pub async fn bsky_callback(
     State(pool): State<Arc<Pool>>,
     Query(params): Query<CallbackParams>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    info!("OAuth callback: state={}", &params.state[..8.min(params.state.len())]);
+
     let client = pool.get().await.map_err(|e| {
+        error!("callback: pool error: {e}");
         (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
     })?;
 
     // Look up oauth_state
     let state_row = client
         .query_opt(
-            "SELECT code_verifier, session_token, handle, did, token_endpoint, dpop_nonce, issuer \
+            "SELECT code_verifier, session_token, handle, did, token_endpoint, dpop_nonce, issuer, dpop_key \
              FROM kerai.oauth_state WHERE state = $1 AND expires_at > now()",
             &[&params.state],
         )
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "invalid or expired state".to_string()))?;
+        .map_err(|e| {
+            error!("callback: state lookup error: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+        .ok_or_else(|| {
+            error!("callback: state not found or expired");
+            (StatusCode::BAD_REQUEST, "invalid or expired state".to_string())
+        })?;
 
     let code_verifier: String = state_row.get(0);
     let session_token: String = state_row.get(1);
@@ -186,13 +200,24 @@ pub async fn bsky_callback(
     let token_endpoint: String = state_row.get(4);
     let dpop_nonce: Option<String> = state_row.get(5);
     let issuer: String = state_row.get(6);
+    let dpop_key_b64: String = state_row.get(7);
+
+    info!("callback: state found, session_token_len={}, issuer={}", session_token.len(), issuer);
+
+    // Restore ephemeral DPoP key
+    let dpop_key = oauth::dpop_key_from_b64(&dpop_key_b64).map_err(|e| {
+        error!("callback: dpop key restore failed: {e}");
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("dpop key error: {e}"))
+    })?;
 
     // Load OAuth config
     let config = load_oauth_config(&client).await.map_err(|e| {
+        error!("callback: config load failed: {e}");
         (StatusCode::INTERNAL_SERVER_ERROR, e)
     })?;
 
     // Exchange code for tokens
+    info!("callback: exchanging code for tokens at {token_endpoint}");
     let token_resp = oauth::exchange_code(
         &config,
         &token_endpoint,
@@ -200,19 +225,42 @@ pub async fn bsky_callback(
         &params.code,
         &code_verifier,
         dpop_nonce.as_deref(),
+        &dpop_key,
     )
     .await
-    .map_err(|e| (StatusCode::BAD_GATEWAY, format!("token exchange failed: {e}")))?;
+    .map_err(|e| {
+        error!("callback: token exchange failed: {e}");
+        (StatusCode::BAD_GATEWAY, format!("token exchange failed: {e}"))
+    })?;
 
     // Extract DID from token response (sub field) or use stored DID
     let user_did = token_resp
         .sub
         .as_deref()
         .or(did.as_deref())
-        .ok_or_else(|| (StatusCode::INTERNAL_SERVER_ERROR, "no DID in token response".to_string()))?
+        .ok_or_else(|| {
+            error!("callback: no DID in token response");
+            (StatusCode::INTERNAL_SERVER_ERROR, "no DID in token response".to_string())
+        })?
         .to_string();
 
-    let user_handle = handle.unwrap_or_default();
+    info!("callback: authenticated as DID {user_did}");
+
+    // Resolve handle from DID if not already known
+    let user_handle = if let Some(h) = handle.filter(|h| !h.is_empty()) {
+        h
+    } else {
+        match oauth::resolve_did_to_handle(&user_did).await {
+            Ok(h) => {
+                info!("callback: resolved handle {h}");
+                h
+            }
+            Err(e) => {
+                info!("callback: handle resolution failed (non-fatal): {e}");
+                String::new()
+            }
+        }
+    };
 
     // Find session
     let session_row = client
@@ -222,15 +270,22 @@ pub async fn bsky_callback(
             &[&session_token],
         )
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "session expired".to_string()))?;
+        .map_err(|e| {
+            error!("callback: session lookup error: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?
+        .ok_or_else(|| {
+            error!("callback: session expired for token_len={}", session_token.len());
+            (StatusCode::BAD_REQUEST, "session expired".to_string())
+        })?;
 
     let current_user_id: Uuid = session_row.get(0);
+    info!("callback: upgrading user {current_user_id}");
 
     // Check if DID already has an account
     let existing_user = client
         .query_opt(
-            "SELECT id FROM kerai.users WHERE did = $1",
+            "SELECT id, is_allowed FROM kerai.users WHERE did = $1",
             &[&user_did],
         )
         .await
@@ -238,7 +293,20 @@ pub async fn bsky_callback(
 
     if let Some(existing_row) = existing_user {
         let existing_user_id: Uuid = existing_row.get(0);
+        let is_allowed: bool = existing_row.get(1);
+
+        // Access gate: existing user must be allowed
+        if !is_allowed {
+            info!("callback: user {existing_user_id} not allowed, rejecting");
+            // Clean up oauth state
+            let _ = client
+                .execute("DELETE FROM kerai.oauth_state WHERE state = $1", &[&params.state])
+                .await;
+            return Ok(Redirect::to("/?error=not_allowed"));
+        }
+
         if existing_user_id != current_user_id {
+            info!("callback: DID already linked to user {existing_user_id}, merging session");
             // DID already has an account — point session to existing user
             client
                 .execute(
@@ -257,17 +325,86 @@ pub async fn bsky_callback(
                 )
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        } else {
+            info!("callback: DID already linked to this user, updating handle");
+            client
+                .execute(
+                    "UPDATE kerai.users SET handle = $1, last_login = now() WHERE id = $2",
+                    &[&user_handle, &current_user_id],
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
         }
     } else {
-        // Upgrade anonymous user → bsky user
-        client
-            .execute(
-                "UPDATE kerai.users SET did = $1, handle = $2, auth_provider = 'bsky', last_login = now() \
-                 WHERE id = $3",
-                &[&user_did, &user_handle, &current_user_id],
+        // New user — check if any admin exists
+        let has_admin: bool = client
+            .query_one(
+                "SELECT EXISTS(SELECT 1 FROM kerai.users WHERE is_admin = true)",
+                &[],
             )
             .await
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?
+            .get(0);
+
+        if !has_admin {
+            info!("callback: no admin exists — first user becomes admin");
+            // First user ever: auto-admin + auto-allow
+            client
+                .execute(
+                    "UPDATE kerai.users SET did = $1, handle = $2, auth_provider = 'bsky', \
+                     is_admin = true, is_allowed = true, last_login = now() \
+                     WHERE id = $3",
+                    &[&user_did, &user_handle, &current_user_id],
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        } else {
+            // Admin exists — check if handle was pre-allowlisted (placeholder row)
+            let placeholder = client
+                .query_opt(
+                    "SELECT id FROM kerai.users WHERE handle = $1 AND is_allowed = true AND did IS NULL",
+                    &[&user_handle],
+                )
+                .await
+                .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+            if let Some(placeholder_row) = placeholder {
+                let placeholder_id: Uuid = placeholder_row.get(0);
+                info!("callback: found allowlisted placeholder {placeholder_id}, upgrading");
+                // Delete the placeholder, upgrade the current anonymous user
+                client
+                    .execute("DELETE FROM kerai.users WHERE id = $1", &[&placeholder_id])
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+                client
+                    .execute(
+                        "UPDATE kerai.users SET did = $1, handle = $2, auth_provider = 'bsky', \
+                         is_allowed = true, last_login = now() \
+                         WHERE id = $3",
+                        &[&user_did, &user_handle, &current_user_id],
+                    )
+                    .await
+                    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+            } else {
+                info!("callback: user {} not allowlisted, rejecting", user_handle);
+                // Not allowlisted — reject
+                let _ = client
+                    .execute("DELETE FROM kerai.oauth_state WHERE state = $1", &[&params.state])
+                    .await;
+                return Ok(Redirect::to("/?error=not_allowed"));
+            }
+        }
+    }
+
+    // Rename anonymous workspace if applicable
+    if !user_handle.is_empty() {
+        let _ = client
+            .execute(
+                "UPDATE kerai.workspaces SET name = $1 \
+                 WHERE user_id = $2 AND is_anonymous = true AND name LIKE 'anon-%'",
+                &[&user_handle, &current_user_id],
+            )
+            .await;
     }
 
     // Clean up oauth state
@@ -279,6 +416,7 @@ pub async fn bsky_callback(
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+    info!("callback: success, redirecting to /");
     // Redirect to home
     Ok(Redirect::to("/"))
 }
@@ -372,7 +510,7 @@ async fn lookup_session(
 ) -> Result<Option<SessionInfo>, (StatusCode, String)> {
     let row = client
         .query_opt(
-            "SELECT s.user_id, s.workspace_id, w.name, u.handle, u.auth_provider, s.token \
+            "SELECT s.user_id, s.workspace_id, w.name, u.handle, u.auth_provider, s.token, u.is_admin \
              FROM kerai.sessions s \
              JOIN kerai.users u ON u.id = s.user_id \
              JOIN kerai.workspaces w ON w.id = s.workspace_id \
@@ -389,6 +527,7 @@ async fn lookup_session(
         handle: r.get::<_, Option<String>>(3),
         auth_provider: r.get::<_, String>(4),
         token: r.get::<_, String>(5),
+        is_admin: r.get::<_, bool>(6),
     }))
 }
 

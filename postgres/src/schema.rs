@@ -748,6 +748,8 @@ CREATE TABLE kerai.users (
     handle         TEXT,
     auth_provider  TEXT NOT NULL DEFAULT 'anonymous',
     auth_token     TEXT,
+    is_admin       BOOLEAN NOT NULL DEFAULT false,
+    is_allowed     BOOLEAN NOT NULL DEFAULT false,
     created_at     TIMESTAMPTZ DEFAULT now(),
     last_login     TIMESTAMPTZ DEFAULT now()
 );
@@ -858,6 +860,7 @@ CREATE TABLE kerai.oauth_state (
     token_endpoint TEXT NOT NULL,
     issuer         TEXT NOT NULL DEFAULT '',
     dpop_nonce     TEXT,
+    dpop_key       TEXT NOT NULL DEFAULT '',
     created_at     TIMESTAMPTZ DEFAULT now(),
     expires_at     TIMESTAMPTZ DEFAULT now() + interval '10 minutes'
 );

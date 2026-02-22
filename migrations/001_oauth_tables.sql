@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS kerai.oauth_state (
     token_endpoint TEXT NOT NULL,
     issuer         TEXT NOT NULL DEFAULT '',
     dpop_nonce     TEXT,
+    dpop_key       TEXT NOT NULL DEFAULT '',
     created_at     TIMESTAMPTZ DEFAULT now(),
     expires_at     TIMESTAMPTZ DEFAULT now() + interval '10 minutes'
 );

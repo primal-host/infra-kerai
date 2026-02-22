@@ -368,11 +368,13 @@ pub fn build_client_assertion(
 
 /// Perform Pushed Authorization Request (PAR).
 /// Returns the authorize URL to redirect the user to.
+/// `dpop_key` must be an ephemeral key distinct from `config.private_key`.
 pub async fn pushed_auth_request(
     config: &OAuthConfig,
     auth_meta: &AuthServerMeta,
     code_challenge: &str,
     state: &str,
+    dpop_key: &SecretKey,
 ) -> Result<String, String> {
     let par_endpoint = auth_meta
         .pushed_authorization_request_endpoint
@@ -395,10 +397,10 @@ pub async fn pushed_auth_request(
         ),
     ];
 
-    // First attempt
+    // First attempt — client assertion uses config key, DPoP uses ephemeral key
     let client_assertion =
         build_client_assertion(&config.private_key, &config.client_id, &auth_meta.issuer)?;
-    let dpop_proof = build_dpop_proof(&config.private_key, "POST", par_endpoint, None)?;
+    let dpop_proof = build_dpop_proof(dpop_key, "POST", par_endpoint, None)?;
 
     let http = reqwest::Client::new();
     let mut form: Vec<(&str, &str)> = par_params.to_vec();
@@ -421,7 +423,7 @@ pub async fn pushed_auth_request(
             let client_assertion2 =
                 build_client_assertion(&config.private_key, &config.client_id, &auth_meta.issuer)?;
             let dpop_proof2 =
-                build_dpop_proof(&config.private_key, "POST", par_endpoint, Some(&nonce))?;
+                build_dpop_proof(dpop_key, "POST", par_endpoint, Some(&nonce))?;
             let mut form2: Vec<(&str, &str)> = par_params.to_vec();
             form2.push(("client_assertion", &client_assertion2));
 
@@ -473,6 +475,7 @@ pub async fn pushed_auth_request(
 }
 
 /// Exchange authorization code for tokens.
+/// `dpop_key` must be the same ephemeral key used during PAR.
 pub async fn exchange_code(
     config: &OAuthConfig,
     token_endpoint: &str,
@@ -480,13 +483,14 @@ pub async fn exchange_code(
     code: &str,
     code_verifier: &str,
     dpop_nonce: Option<&str>,
+    dpop_key: &SecretKey,
 ) -> Result<TokenResponse, String> {
     let redirect_uri = format!("{}/auth/bsky/callback", config.public_url);
     let http = reqwest::Client::new();
 
-    // First attempt
+    // First attempt — DPoP uses ephemeral key, client assertion uses config key
     let dpop_proof =
-        build_dpop_proof(&config.private_key, "POST", token_endpoint, dpop_nonce)?;
+        build_dpop_proof(dpop_key, "POST", token_endpoint, dpop_nonce)?;
     let client_assertion =
         build_client_assertion(&config.private_key, &config.client_id, issuer)?;
 
@@ -516,7 +520,7 @@ pub async fn exchange_code(
             let _ = resp.text().await; // consume body
 
             let dpop_proof2 =
-                build_dpop_proof(&config.private_key, "POST", token_endpoint, Some(&nonce))?;
+                build_dpop_proof(dpop_key, "POST", token_endpoint, Some(&nonce))?;
             let client_assertion2 =
                 build_client_assertion(&config.private_key, &config.client_id, issuer)?;
 
@@ -563,6 +567,52 @@ pub async fn exchange_code(
     resp.json::<TokenResponse>()
         .await
         .map_err(|e| format!("token response parse failed: {e}"))
+}
+
+/// Generate an ephemeral DPoP key pair.
+/// Returns (SecretKey, base64url-encoded private key bytes).
+pub fn generate_dpop_key() -> (SecretKey, String) {
+    let secret = SecretKey::random(&mut OsRng);
+    let b64 = URL_SAFE_NO_PAD.encode(secret.to_bytes());
+    (secret, b64)
+}
+
+/// Restore a DPoP key from base64url-encoded bytes.
+pub fn dpop_key_from_b64(b64: &str) -> Result<SecretKey, String> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(b64)
+        .map_err(|e| format!("invalid dpop key encoding: {e}"))?;
+    SecretKey::from_slice(&bytes).map_err(|e| format!("invalid dpop key: {e}"))
+}
+
+/// Resolve a DID to a handle via the PLC directory.
+pub async fn resolve_did_to_handle(did: &str) -> Result<String, String> {
+    let plc_url = format!("https://plc.directory/{}", did);
+    let resp = reqwest::get(&plc_url)
+        .await
+        .map_err(|e| format!("PLC directory request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        return Err(format!("PLC directory returned {}", resp.status()));
+    }
+
+    let doc: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("PLC document parse failed: {e}"))?;
+
+    // alsoKnownAs contains ["at://handle.example.com"]
+    if let Some(aka) = doc.get("alsoKnownAs").and_then(|v| v.as_array()) {
+        for entry in aka {
+            if let Some(s) = entry.as_str() {
+                if let Some(handle) = s.strip_prefix("at://") {
+                    return Ok(handle.to_string());
+                }
+            }
+        }
+    }
+
+    Err("no handle found in DID document".to_string())
 }
 
 /// Simple percent-encoding for URL query parameters.

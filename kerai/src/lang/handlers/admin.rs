@@ -30,3 +30,29 @@ pub fn admin_oauth_setup_bsky(m: &mut Machine) -> Result<(), String> {
     });
     Ok(())
 }
+
+/// `admin user` — push the admin.user library marker.
+pub fn admin_user(m: &mut Machine) -> Result<(), String> {
+    m.push(Ptr::library("admin.user"));
+    Ok(())
+}
+
+/// `admin user allow` — pop text from stack, push admin_user_allow_request.
+/// Usage: `"handle.bsky.social" admin user allow`
+pub fn admin_user_allow(m: &mut Machine) -> Result<(), String> {
+    let handle_ptr = m.pop().ok_or("admin user allow: need a handle on the stack")?;
+    if handle_ptr.kind != "text" {
+        return Err(format!(
+            "admin user allow: expected text, got {}",
+            handle_ptr.kind
+        ));
+    }
+    let handle = handle_ptr.ref_id;
+    m.push(Ptr {
+        kind: "admin_user_allow_request".into(),
+        ref_id: handle,
+        meta: serde_json::Value::Null,
+        id: 0,
+    });
+    Ok(())
+}
