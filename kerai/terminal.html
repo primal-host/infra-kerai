@@ -26,6 +26,7 @@ body{display:flex;flex-direction:column}
 .kind-workspace_list{color:#7ee787}
 .kind-auth_pending{color:#d29922}
 .kind-session{color:#58a6ff}
+.kind-list-help{color:#8b949e}
 .ws-item{display:block;padding:2px 0;cursor:pointer}
 .ws-item:hover{text-decoration:underline}
 .ws-active{font-weight:bold}
@@ -105,7 +106,7 @@ function renderStack(stack){
     rowid.textContent=item.id||'';
 
     const content=document.createElement('span');
-    content.className='stack-content kind-'+item.kind;
+    content.className='stack-content kind-'+item.kind.replace(/\./g,'-');
     content.textContent=formatPtr(item);
 
     row.appendChild(rowid);
@@ -148,6 +149,26 @@ function formatPtr(ptr){
       const handle=(ptr.meta&&ptr.meta.handle)||'anonymous';
       const provider=(ptr.meta&&ptr.meta.provider)||'?';
       return 'session: '+handle+' ('+provider+')';
+    }
+    case 'list.help':{
+      const items=(ptr.meta&&ptr.meta.items)||[];
+      if(items.length===0)return 'commands: (none)';
+      const ancestors=[];
+      const lines=['commands:'];
+      items.forEach(function(item){
+        const path=item.path, desc=item.desc;
+        while(ancestors.length>0){
+          const top=ancestors[ancestors.length-1];
+          if(path.startsWith(top)&&path.charAt(top.length)==='.') break;
+          ancestors.pop();
+        }
+        const depth=ancestors.length;
+        const indent='  '.repeat(depth+1);
+        const label=depth>0?'.'+path.slice(path.lastIndexOf('.')+1):path;
+        lines.push(indent+label+' \u2014 '+desc);
+        ancestors.push(path);
+      });
+      return lines.join('\n');
     }
     case 'error': return 'error: '+ptr.ref_id;
     case 'library': return '['+ptr.ref_id+']';
@@ -205,18 +226,6 @@ async function handleSubmit(){
 
   if(history.length===0||history[history.length-1]!==trimmed){
     history.push(trimmed);
-  }
-
-  // Local commands
-  if(trimmed==='help'){
-    stackArea.innerHTML=[
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Stack commands: dup drop swap over rot clear depth view</span></div>',
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Arithmetic: + - * / %</span></div>',
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Literals: integers, floats, hex (0xFF), "quoted strings", [lists]</span></div>',
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Libraries: workspace (list/load/new/save), login (bsky), admin (oauth setup bsky, user allow)</span></div>',
-      '<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-text">Commands: help, clear (local)</span></div>'
-    ].join('');
-    return;
   }
 
   await sendEval(trimmed);
