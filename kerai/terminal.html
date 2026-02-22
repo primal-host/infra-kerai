@@ -121,6 +121,24 @@ function renderStack(stack){
 }
 
 function formatPtr(ptr){
+  if(ptr.meta&&ptr.meta.folded){
+    switch(ptr.kind){
+      case 'list.help':{
+        const count=(ptr.meta.items||[]).length;
+        return '[commands: '+count+']';
+      }
+      case 'workspace_list':{
+        const count=(ptr.meta.items||[]).length;
+        return '[workspaces: '+count+']';
+      }
+      case 'text':{
+        const s=ptr.ref_id;
+        const p=s.length>40?s.slice(0,37)+'...':s;
+        return '"'+p+'"';
+      }
+      default: return ptr.ref_id;
+    }
+  }
   switch(ptr.kind){
     case 'int': return ptr.ref_id;
     case 'float':{
