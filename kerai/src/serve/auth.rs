@@ -20,7 +20,7 @@ pub struct SessionInfo {
     pub auth_provider: String,
     pub is_admin: bool,
     pub token: String,
-    pub db_name: String,
+    pub pg_host: String,
 }
 
 /// GET /auth/session — Return current session info or create anonymous session.
@@ -34,7 +34,7 @@ pub async fn get_session(
 
     // Check for existing session cookie
     if let Some(token) = extract_session_token(&headers) {
-        if let Some(info) = lookup_session(&client, &token, pool.db_name()).await? {
+        if let Some(info) = lookup_session(&client, &token, pool.pg_host()).await? {
             return Ok(Json(info));
         }
     }
@@ -81,7 +81,7 @@ pub async fn get_session(
         auth_provider: "anonymous".into(),
         is_admin: false,
         token,
-        db_name: pool.db_name().to_string(),
+        pg_host: pool.pg_host().to_string(),
     }))
 }
 
@@ -509,7 +509,7 @@ fn extract_session_token(headers: &HeaderMap) -> Option<String> {
 async fn lookup_session(
     client: &tokio_postgres::Client,
     token: &str,
-    db_name: &str,
+    pg_host: &str,
 ) -> Result<Option<SessionInfo>, (StatusCode, String)> {
     let row = client
         .query_opt(
@@ -531,7 +531,7 @@ async fn lookup_session(
         auth_provider: r.get::<_, String>(4),
         token: r.get::<_, String>(5),
         is_admin: r.get::<_, bool>(6),
-        db_name: db_name.to_string(),
+        pg_host: pg_host.to_string(),
     }))
 }
 

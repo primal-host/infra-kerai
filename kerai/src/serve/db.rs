@@ -40,19 +40,19 @@ impl Pool {
         self.connect().await
     }
 
-    /// Extract database name from connection string.
-    pub fn db_name(&self) -> &str {
+    /// Extract postgres host from connection string.
+    pub fn pg_host(&self) -> &str {
         let url = &self.config.database_url;
         // Key=value format: "host=/tmp dbname=kerai"
-        if let Some(pos) = url.find("dbname=") {
-            let rest = &url[pos + 7..];
+        if let Some(pos) = url.find("host=") {
+            let rest = &url[pos + 5..];
             rest.split_whitespace().next().unwrap_or("?")
-        // URI format: "postgresql://...host/dbname"
-        } else if let Some(pos) = url.rfind('/') {
-            let name = &url[pos + 1..];
-            if name.is_empty() { "?" } else { name.split('?').next().unwrap_or("?") }
+        // URI format: "postgresql://user:pass@host:port/db"
+        } else if let Some(at) = url.find('@') {
+            let rest = &url[at + 1..];
+            rest.split(&[':', '/'][..]).next().unwrap_or("?")
         } else {
-            "?"
+            "localhost"
         }
     }
 

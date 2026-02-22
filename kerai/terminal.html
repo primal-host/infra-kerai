@@ -250,7 +250,7 @@ async function handleSubmit(){
 function updateConn(){
   if(!session)return;
   const parts=[];
-  if(session.db_name)parts.push(session.db_name);
+  if(session.pg_host)parts.push(session.pg_host);
   parts.push(window.location.hostname);
   parts.push(session.handle||'anonymous');
   statusConn.textContent=parts.join('  ');
