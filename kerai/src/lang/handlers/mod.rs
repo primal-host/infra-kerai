@@ -119,5 +119,8 @@ pub fn register_all() -> (
     help.insert("library:admin.oauth.setup/bsky".into(), "generate ES256 keypair for Bluesky OAuth".into());
     help.insert("library:admin.user/allow".into(), "allowlist a bsky handle for login".into());
 
+    // help command (handled as special word in execute(), not via handler map)
+    help.insert("help".into(), "list all commands".into());
+
     (handlers, type_methods, help)
 }
