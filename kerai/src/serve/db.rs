@@ -40,6 +40,22 @@ impl Pool {
         self.connect().await
     }
 
+    /// Extract database name from connection string.
+    pub fn db_name(&self) -> &str {
+        let url = &self.config.database_url;
+        // Key=value format: "host=/tmp dbname=kerai"
+        if let Some(pos) = url.find("dbname=") {
+            let rest = &url[pos + 7..];
+            rest.split_whitespace().next().unwrap_or("?")
+        // URI format: "postgresql://...host/dbname"
+        } else if let Some(pos) = url.rfind('/') {
+            let name = &url[pos + 1..];
+            if name.is_empty() { "?" } else { name.split('?').next().unwrap_or("?") }
+        } else {
+            "?"
+        }
+    }
+
     async fn connect(&self) -> Result<tokio_postgres::Client, tokio_postgres::Error> {
         let (client, connection) = tokio_postgres::connect(&self.config.database_url, NoTls).await?;
 
