@@ -131,6 +131,22 @@ impl Machine {
                         }
                     }
 
+                    // 3b. drop.X — targeted drop by index, range, or rowid
+                    if let Some(arg) = word.strip_prefix("drop.") {
+                        if !arg.is_empty() {
+                            if help_mode {
+                                let ptr = match self.help.get("drop") {
+                                    Some(desc) => Ptr::info(desc),
+                                    None => Ptr::warn("drop: no help available"),
+                                };
+                                self.stack.push(ptr);
+                            } else {
+                                self.execute_drop(arg);
+                            }
+                            continue;
+                        }
+                    }
+
                     // 4. Check global handlers
                     if let Some(handler) = self.handlers.get(word).copied() {
                         if help_mode {
@@ -258,6 +274,81 @@ impl Machine {
             }
         }
         self.stack.push(Ptr::text(&lines.join("\n")));
+    }
+
+    /// Execute a targeted drop: by negative index, range, or rowid.
+    ///
+    /// Argument forms:
+    ///   "-N"   → drop by relative position (N from top, so -1 = second)
+    ///   "A-B"  → drop range of positions A through B from top (inclusive)
+    ///   "0"    → drop top
+    ///   "N"    → drop by rowid (positive, non-zero)
+    fn execute_drop(&mut self, arg: &str) {
+        if let Some(neg) = arg.strip_prefix('-') {
+            // Negative index: -N means position N from top
+            match neg.parse::<usize>() {
+                Ok(n) => {
+                    if n >= self.stack.len() {
+                        self.stack.push(Ptr::error(&format!(
+                            "drop.-{}: out of range (stack depth {})", n, self.stack.len()
+                        )));
+                        return;
+                    }
+                    let idx = self.stack.len() - 1 - n;
+                    self.stack.remove(idx);
+                }
+                Err(_) => {
+                    self.stack.push(Ptr::error(&format!("drop.{}: invalid argument", arg)));
+                }
+            }
+        } else if let Some(dash) = arg.find('-') {
+            // Range: A-B (positions from top, inclusive)
+            let start_str = &arg[..dash];
+            let end_str = &arg[dash + 1..];
+            match (start_str.parse::<usize>(), end_str.parse::<usize>()) {
+                (Ok(start), Ok(end)) => {
+                    if start > end {
+                        self.stack.push(Ptr::error("drop: range start must be <= end"));
+                        return;
+                    }
+                    if end >= self.stack.len() {
+                        self.stack.push(Ptr::error(&format!(
+                            "drop.{}-{}: out of range (stack depth {})", start, end, self.stack.len()
+                        )));
+                        return;
+                    }
+                    // Position P from top → Vec index = len - 1 - P
+                    // Remove from lowest Vec index to highest (drain handles it)
+                    let first_idx = self.stack.len() - 1 - end;
+                    let count = end - start + 1;
+                    self.stack.drain(first_idx..first_idx + count);
+                }
+                _ => {
+                    self.stack.push(Ptr::error(&format!("drop.{}: invalid range", arg)));
+                }
+            }
+        } else {
+            // Positive number: 0 = top, otherwise rowid
+            match arg.parse::<i64>() {
+                Ok(0) => {
+                    if self.stack.is_empty() {
+                        self.stack.push(Ptr::error("drop.0: stack empty"));
+                    } else {
+                        self.stack.pop();
+                    }
+                }
+                Ok(rowid) if rowid > 0 => {
+                    if let Some(pos) = self.stack.iter().position(|p| p.id == rowid) {
+                        self.stack.remove(pos);
+                    } else {
+                        self.stack.push(Ptr::error(&format!("drop.{}: rowid not found", rowid)));
+                    }
+                }
+                _ => {
+                    self.stack.push(Ptr::error(&format!("drop.{}: invalid argument", arg)));
+                }
+            }
+        }
     }
 
     /// Look up help text for a dot-path like "admin.user.allow".
@@ -409,6 +500,109 @@ mod tests {
         let mut m = test_machine();
         m.execute("1 2 3 drop").unwrap();
         assert_eq!(m.stack.len(), 2);
+    }
+
+    #[test]
+    fn drop_dot_zero() {
+        let mut m = test_machine();
+        m.execute("1 2 3 drop.0").unwrap();
+        assert_eq!(m.stack.len(), 2);
+        assert_eq!(m.stack[1], Ptr::int(2));
+    }
+
+    #[test]
+    fn drop_negative_index() {
+        let mut m = test_machine();
+        m.execute("10 20 30 drop.-1").unwrap();
+        assert_eq!(m.stack.len(), 2);
+        // Removed second from top (20), leaving [10, 30]
+        assert_eq!(m.stack[0], Ptr::int(10));
+        assert_eq!(m.stack[1], Ptr::int(30));
+    }
+
+    #[test]
+    fn drop_negative_deep() {
+        let mut m = test_machine();
+        m.execute("10 20 30 40 drop.-3").unwrap();
+        assert_eq!(m.stack.len(), 3);
+        // Removed 4th from top (10), leaving [20, 30, 40]
+        assert_eq!(m.stack[0], Ptr::int(20));
+        assert_eq!(m.stack[1], Ptr::int(30));
+        assert_eq!(m.stack[2], Ptr::int(40));
+    }
+
+    #[test]
+    fn drop_negative_out_of_range() {
+        let mut m = test_machine();
+        m.execute("10 20 drop.-5").unwrap();
+        assert_eq!(m.stack.len(), 3); // 10, 20, + error
+        assert_eq!(m.stack[2].kind, "error");
+    }
+
+    #[test]
+    fn drop_range() {
+        let mut m = test_machine();
+        m.execute("10 20 30 40 50 drop.0-1").unwrap();
+        assert_eq!(m.stack.len(), 3);
+        // Removed top two (50, 40), leaving [10, 20, 30]
+        assert_eq!(m.stack[0], Ptr::int(10));
+        assert_eq!(m.stack[1], Ptr::int(20));
+        assert_eq!(m.stack[2], Ptr::int(30));
+    }
+
+    #[test]
+    fn drop_range_middle() {
+        let mut m = test_machine();
+        m.execute("10 20 30 40 50 drop.2-3").unwrap();
+        assert_eq!(m.stack.len(), 3);
+        // Removed positions 2,3 from top (30, 20), leaving [10, 40, 50]
+        assert_eq!(m.stack[0], Ptr::int(10));
+        assert_eq!(m.stack[1], Ptr::int(40));
+        assert_eq!(m.stack[2], Ptr::int(50));
+    }
+
+    #[test]
+    fn drop_range_all() {
+        let mut m = test_machine();
+        m.execute("10 20 30 drop.0-2").unwrap();
+        assert!(m.stack.is_empty());
+    }
+
+    #[test]
+    fn drop_range_out_of_range() {
+        let mut m = test_machine();
+        m.execute("10 20 drop.0-5").unwrap();
+        assert_eq!(m.stack.len(), 3); // 10, 20, + error
+        assert_eq!(m.stack[2].kind, "error");
+    }
+
+    #[test]
+    fn drop_by_rowid() {
+        let mut m = test_machine();
+        // Simulate persisted items with rowids
+        m.stack.push(Ptr { id: 100, ..Ptr::int(10) });
+        m.stack.push(Ptr { id: 200, ..Ptr::int(20) });
+        m.stack.push(Ptr { id: 300, ..Ptr::int(30) });
+        m.execute("drop.200").unwrap();
+        assert_eq!(m.stack.len(), 2);
+        assert_eq!(m.stack[0].id, 100);
+        assert_eq!(m.stack[1].id, 300);
+    }
+
+    #[test]
+    fn drop_rowid_not_found() {
+        let mut m = test_machine();
+        m.execute("10 20 drop.99999").unwrap();
+        assert_eq!(m.stack.len(), 3); // 10, 20, + error
+        assert_eq!(m.stack[2].kind, "error");
+    }
+
+    #[test]
+    fn drop_help_mode() {
+        let mut m = test_machine();
+        m.execute("drop.0.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text.info");
     }
 
     #[test]
