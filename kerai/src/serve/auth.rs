@@ -133,8 +133,8 @@ pub async fn bsky_start(
     let did_ref: Option<&str> = None;
     client
         .execute(
-            "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, handle, did, token_endpoint) \
-             VALUES ($1, $2, $3, $4, $5, $6)",
+            "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, handle, did, token_endpoint, issuer) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
             &[
                 &state,
                 &code_verifier,
@@ -142,6 +142,7 @@ pub async fn bsky_start(
                 &handle_ref,
                 &did_ref,
                 &auth_meta.token_endpoint,
+                &auth_meta.issuer,
             ],
         )
         .await
@@ -170,7 +171,7 @@ pub async fn bsky_callback(
     // Look up oauth_state
     let state_row = client
         .query_opt(
-            "SELECT code_verifier, session_token, handle, did, token_endpoint, dpop_nonce \
+            "SELECT code_verifier, session_token, handle, did, token_endpoint, dpop_nonce, issuer \
              FROM kerai.oauth_state WHERE state = $1 AND expires_at > now()",
             &[&params.state],
         )
@@ -184,6 +185,7 @@ pub async fn bsky_callback(
     let did: Option<String> = state_row.get(3);
     let token_endpoint: String = state_row.get(4);
     let dpop_nonce: Option<String> = state_row.get(5);
+    let issuer: String = state_row.get(6);
 
     // Load OAuth config
     let config = load_oauth_config(&client).await.map_err(|e| {
@@ -194,6 +196,7 @@ pub async fn bsky_callback(
     let token_resp = oauth::exchange_code(
         &config,
         &token_endpoint,
+        &issuer,
         &params.code,
         &code_verifier,
         dpop_nonce.as_deref(),

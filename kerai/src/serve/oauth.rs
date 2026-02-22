@@ -20,6 +20,7 @@ pub struct OAuthConfig {
 /// Authorization server metadata.
 #[derive(Debug, Deserialize)]
 pub struct AuthServerMeta {
+    pub issuer: String,
     pub authorization_endpoint: String,
     pub token_endpoint: String,
     #[serde(default)]
@@ -317,10 +318,11 @@ pub fn build_dpop_proof(
 }
 
 /// Build a client_assertion JWT (private_key_jwt).
+/// `audience` should be the authorization server's issuer URL.
 pub fn build_client_assertion(
     key: &SecretKey,
     client_id: &str,
-    token_endpoint: &str,
+    audience: &str,
 ) -> Result<String, String> {
     use p256::ecdsa::signature::Signer;
     let signing_key = SigningKey::from(key);
@@ -348,7 +350,7 @@ pub fn build_client_assertion(
     let claims = serde_json::json!({
         "iss": client_id,
         "sub": client_id,
-        "aud": token_endpoint,
+        "aud": audience,
         "jti": jti,
         "iat": now,
         "exp": now + 300,
@@ -395,7 +397,7 @@ pub async fn pushed_auth_request(
 
     // First attempt
     let client_assertion =
-        build_client_assertion(&config.private_key, &config.client_id, par_endpoint)?;
+        build_client_assertion(&config.private_key, &config.client_id, &auth_meta.issuer)?;
     let dpop_proof = build_dpop_proof(&config.private_key, "POST", par_endpoint, None)?;
 
     let http = reqwest::Client::new();
@@ -417,7 +419,7 @@ pub async fn pushed_auth_request(
             let _ = resp.text().await; // consume body
 
             let client_assertion2 =
-                build_client_assertion(&config.private_key, &config.client_id, par_endpoint)?;
+                build_client_assertion(&config.private_key, &config.client_id, &auth_meta.issuer)?;
             let dpop_proof2 =
                 build_dpop_proof(&config.private_key, "POST", par_endpoint, Some(&nonce))?;
             let mut form2: Vec<(&str, &str)> = par_params.to_vec();
@@ -474,6 +476,7 @@ pub async fn pushed_auth_request(
 pub async fn exchange_code(
     config: &OAuthConfig,
     token_endpoint: &str,
+    issuer: &str,
     code: &str,
     code_verifier: &str,
     dpop_nonce: Option<&str>,
@@ -485,7 +488,7 @@ pub async fn exchange_code(
     let dpop_proof =
         build_dpop_proof(&config.private_key, "POST", token_endpoint, dpop_nonce)?;
     let client_assertion =
-        build_client_assertion(&config.private_key, &config.client_id, token_endpoint)?;
+        build_client_assertion(&config.private_key, &config.client_id, issuer)?;
 
     let resp = http
         .post(token_endpoint)
@@ -515,7 +518,7 @@ pub async fn exchange_code(
             let dpop_proof2 =
                 build_dpop_proof(&config.private_key, "POST", token_endpoint, Some(&nonce))?;
             let client_assertion2 =
-                build_client_assertion(&config.private_key, &config.client_id, token_endpoint)?;
+                build_client_assertion(&config.private_key, &config.client_id, issuer)?;
 
             let resp2 = http
                 .post(token_endpoint)

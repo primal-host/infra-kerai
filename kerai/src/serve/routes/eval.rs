@@ -378,9 +378,9 @@ async fn resolve_requests(machine: &mut Machine, pool: &Pool) {
                                                 // Store oauth state
                                                 let _ = client
                                                     .execute(
-                                                        "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, token_endpoint) \
-                                                         VALUES ($1, $2, $3, $4)",
-                                                        &[&state, &code_verifier, &sess_token, &auth_meta.token_endpoint],
+                                                        "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, token_endpoint, issuer) \
+                                                         VALUES ($1, $2, $3, $4, $5)",
+                                                        &[&state, &code_verifier, &sess_token, &auth_meta.token_endpoint, &auth_meta.issuer],
                                                     )
                                                     .await;
 
