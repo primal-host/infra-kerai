@@ -30,7 +30,7 @@ pub fn register_all() -> (
     handlers.insert("depth".into(), stack_ops::depth);
 
     help.insert("dup".into(), "duplicate top of stack".into());
-    help.insert("drop".into(), "remove top of stack".into());
+    help.insert("drop".into(), "remove items: drop, drop.0, drop.-N, drop.A-B, drop.ROWID".into());
     help.insert("swap".into(), "swap top two stack items".into());
     help.insert("over".into(), "copy second item to top".into());
     help.insert("rot".into(), "rotate top three items".into());
