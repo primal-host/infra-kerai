@@ -1,3 +1,4 @@
+pub mod connections;
 pub mod documents;
 pub mod eval;
 pub mod health;
@@ -63,6 +64,9 @@ pub fn build_router(pool: Arc<Pool>, notify_tx: broadcast::Sender<String>) -> Ro
         .route("/init/pull", post(stack::init_pull))
         .route("/init/push", post(stack::init_push))
         .route("/init/diff", get(stack::init_diff))
+        // Connections
+        .route("/connections", get(connections::connections))
+        .route("/workspace/switch", post(connections::switch_workspace))
         .with_state(pool.clone());
 
     // WebSocket needs its own state

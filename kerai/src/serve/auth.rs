@@ -491,7 +491,7 @@ pub async fn logout(
 }
 
 /// Extract session token from Cookie header.
-fn extract_session_token(headers: &HeaderMap) -> Option<String> {
+pub(crate) fn extract_session_token(headers: &HeaderMap) -> Option<String> {
     let cookie_header = headers.get("cookie")?.to_str().ok()?;
     for pair in cookie_header.split(';') {
         let pair = pair.trim();

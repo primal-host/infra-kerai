@@ -33,13 +33,27 @@ body{display:flex;flex-direction:column}
 #input-row{display:flex;align-items:center;padding:4px 16px 8px;border-top:1px solid #21262d;background:#0d1117}
 #prompt{color:#58a6ff;margin-right:8px;white-space:nowrap;user-select:none}
 #input{flex:1;background:transparent;border:none;outline:none;color:#c9d1d9;font:inherit;caret-color:#58a6ff}
-#status{display:flex;justify-content:space-between;padding:2px 16px;background:#161b22;border-top:1px solid #21262d;font-size:12px;color:#8b949e;user-select:none}
+#conn-panel{max-height:0;overflow:hidden;transition:max-height 0.3s ease;background:#161b22;border-top:1px solid #21262d}
+#conn-panel.open{max-height:60vh;overflow-y:auto}
+#conn-panel-inner{padding:12px 16px}
+.conn-host{color:#484f58;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px}
+.conn-handle{color:#8b949e;font-size:13px;padding:2px 0 6px 12px}
+.conn-ws{display:block;padding:8px 0 8px 24px;color:#c9d1d9;font-size:13px;cursor:pointer;-webkit-tap-highlight-color:transparent;border:none;background:none;font:inherit;width:100%;text-align:left}
+.conn-ws:active{opacity:0.7}
+.conn-ws.active{color:#7ee787}
+.conn-ws-count{color:#484f58;margin-left:4px}
+#status{display:flex;justify-content:center;padding:2px 16px;background:#161b22;border-top:1px solid #21262d;font-size:12px;color:#8b949e;user-select:none;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#status:active{background:#1c2129}
+#status-workspace{display:inline-flex;align-items:center;gap:4px}
+.chevron{display:inline-block;font-size:8px;transition:transform 0.3s ease}
+.chevron.up{transform:rotate(180deg)}
 </style>
 </head>
 <body>
 <div id="stack-area"><div class="stack-empty">empty stack</div></div>
 <div id="input-row"><span id="prompt">kerai&gt;</span><input id="input" autofocus autocomplete="off" spellcheck="false"></div>
-<div id="status"><span id="status-workspace">...</span><span id="status-conn"></span></div>
+<div id="conn-panel"><div id="conn-panel-inner"></div></div>
+<div id="status"><span id="status-workspace">... <span class="chevron">&#9650;</span></span></div>
 <script>
 (function(){
 function setHeight(){document.body.style.height=window.innerHeight+'px'}
@@ -49,21 +63,45 @@ window.addEventListener('resize',setHeight);
 const stackArea=document.getElementById('stack-area');
 const input=document.getElementById('input');
 const statusWorkspace=document.getElementById('status-workspace');
-const statusConn=document.getElementById('status-conn');
+const connPanel=document.getElementById('conn-panel');
+const connInner=document.getElementById('conn-panel-inner');
+const statusBar=document.getElementById('status');
+const chevron=statusWorkspace.querySelector('.chevron');
 
 let session=null;
 let history=[];
 let histIdx=-1;
 let savedInput='';
+let panelOpen=false;
+
+// Connections cache with 60s TTL
+let connCache={data:null,ts:0};
+const CACHE_KEY='kerai_conn_cache';
+const CACHE_TTL=60000;
+
+function loadCache(){
+  try{
+    const raw=localStorage.getItem(CACHE_KEY);
+    if(raw){connCache=JSON.parse(raw);}
+  }catch(e){}
+}
+function saveCache(data){
+  connCache={data:data,ts:Date.now()};
+  try{localStorage.setItem(CACHE_KEY,JSON.stringify(connCache));}catch(e){}
+}
+function invalidateCache(){
+  connCache={data:null,ts:0};
+  try{localStorage.removeItem(CACHE_KEY);}catch(e){}
+}
+loadCache();
 
 // Initialize session
 async function initSession(){
-  // Check for error params (e.g. rejected login)
   const params=new URLSearchParams(window.location.search);
   const err=params.get('error');
   if(err){
     if(err==='not_allowed'){
-      stackArea.innerHTML='<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-error">error: access denied — your account has not been allowlisted by the admin</span></div>';
+      stackArea.innerHTML='<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-error">error: access denied \u2014 your account has not been allowlisted by the admin</span></div>';
     }else{
       stackArea.innerHTML='<div class="stack-item"><span class="stack-rowid"></span><span class="stack-content kind-error">error: '+err+'</span></div>';
     }
@@ -72,13 +110,17 @@ async function initSession(){
   try{
     const res=await fetch('/auth/session',{credentials:'include'});
     session=await res.json();
-    statusWorkspace.textContent=session.workspace_name||'...';
-    updateConn();
-    // Store session token as cookie for subsequent requests
+    updateStatusBar();
     document.cookie='kerai_session='+session.token+';path=/;max-age=2592000;SameSite=Lax';
   }catch(e){
-    statusWorkspace.textContent='offline';
+    statusWorkspace.innerHTML='offline';
   }
+}
+
+function updateStatusBar(){
+  if(!session)return;
+  const name=session.workspace_name||'...';
+  statusWorkspace.innerHTML=name+' <span class="chevron'+(panelOpen?' up':'')+'">&#9650;</span>';
 }
 
 function renderStack(stack){
@@ -87,7 +129,6 @@ function renderStack(stack){
     stackArea.innerHTML='<div class="stack-empty">empty stack</div>';
     return;
   }
-  // Stack renders bottom-up: oldest at top, newest at bottom (position 0 = top of display means oldest)
   stack.forEach(function(item){
     const row=document.createElement('div');
     row.className='stack-item';
@@ -190,6 +231,84 @@ function formatPtr(ptr){
   }
 }
 
+function renderPanel(data){
+  connInner.innerHTML='';
+  const host=document.createElement('div');
+  host.className='conn-host';
+  host.textContent=data.pg_host;
+  connInner.appendChild(host);
+
+  const handle=document.createElement('div');
+  handle.className='conn-handle';
+  handle.textContent=data.handle;
+  connInner.appendChild(handle);
+
+  data.workspaces.forEach(function(ws){
+    const btn=document.createElement('button');
+    btn.className='conn-ws'+(ws.is_active?' active':'');
+    btn.innerHTML=ws.name+'<span class="conn-ws-count">('+ws.item_count+')</span>';
+    btn.addEventListener('click',function(e){
+      e.stopPropagation();
+      switchWorkspace(ws.id);
+    });
+    connInner.appendChild(btn);
+  });
+}
+
+async function fetchConnections(){
+  try{
+    const res=await fetch('/api/connections',{credentials:'include'});
+    if(!res.ok)return null;
+    const data=await res.json();
+    saveCache(data);
+    return data;
+  }catch(e){return null;}
+}
+
+async function togglePanel(){
+  panelOpen=!panelOpen;
+  if(panelOpen){
+    connPanel.classList.add('open');
+    // Show cached data instantly
+    if(connCache.data){
+      renderPanel(connCache.data);
+    }
+    // Fetch fresh data (always, but if cache is fresh skip re-render)
+    const fresh=await fetchConnections();
+    if(fresh){
+      renderPanel(fresh);
+    }
+  }else{
+    connPanel.classList.remove('open');
+  }
+  updateStatusBar();
+}
+
+async function switchWorkspace(wsId){
+  if(!session)return;
+  try{
+    const res=await fetch('/api/workspace/switch',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      credentials:'include',
+      body:JSON.stringify({workspace_id:wsId,session_token:session.token})
+    });
+    if(!res.ok)return;
+    const data=await res.json();
+    renderStack(data.stack);
+
+    // Update session
+    session.workspace_name=data.workspace_name;
+    session.workspace_id=wsId;
+
+    // Close panel
+    panelOpen=false;
+    connPanel.classList.remove('open');
+    updateStatusBar();
+    invalidateCache();
+  }catch(e){}
+}
+
 async function sendEval(expr){
   if(!session)return;
   try{
@@ -211,12 +330,10 @@ async function sendEval(expr){
       }
     }
 
-    // Check if workspace changed (look for workspace_load_request resolution)
     // Re-fetch session to get updated workspace name
     const sres=await fetch('/auth/session',{credentials:'include'});
     const newSession=await sres.json();
     if(newSession.workspace_name){
-      statusWorkspace.textContent=newSession.workspace_name;
       // Update token if changed
       if(newSession.token!==session.token){
         session=newSession;
@@ -226,7 +343,8 @@ async function sendEval(expr){
         session.workspace_id=newSession.workspace_id;
         session.handle=newSession.handle;
       }
-      updateConn();
+      updateStatusBar();
+      invalidateCache();
     }
   }catch(e){
     stackArea.innerHTML='<div class="stack-empty">error: network request failed</div>';
@@ -245,15 +363,6 @@ async function handleSubmit(){
   }
 
   await sendEval(trimmed);
-}
-
-function updateConn(){
-  if(!session)return;
-  const parts=[];
-  if(session.pg_host)parts.push(session.pg_host);
-  parts.push(window.location.hostname);
-  parts.push(session.handle||'anonymous');
-  statusConn.textContent=parts.join('  ');
 }
 
 input.addEventListener('keydown',function(e){
@@ -283,10 +392,31 @@ input.addEventListener('keydown',function(e){
   }else if(e.key==='l'&&e.ctrlKey){
     e.preventDefault();
     stackArea.innerHTML='<div class="stack-empty">empty stack</div>';
+  }else if(e.key==='Escape'&&panelOpen){
+    e.preventDefault();
+    panelOpen=false;
+    connPanel.classList.remove('open');
+    updateStatusBar();
   }
 });
 
-document.addEventListener('click',function(){input.focus();});
+statusBar.addEventListener('click',function(e){
+  e.stopPropagation();
+  togglePanel();
+});
+
+document.addEventListener('click',function(e){
+  if(panelOpen){
+    // Close panel if clicking outside it and status bar
+    if(!connPanel.contains(e.target)&&!statusBar.contains(e.target)){
+      panelOpen=false;
+      connPanel.classList.remove('open');
+      updateStatusBar();
+    }
+    return;
+  }
+  input.focus();
+});
 
 initSession();
 })();
