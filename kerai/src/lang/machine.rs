@@ -108,7 +108,7 @@ impl Machine {
                         continue;
                     }
 
-                    // 3. help command — push structured list or one-liner
+                    // 3. help command — structured list, one-liner, or path lookup
                     if word == "help" {
                         if help_mode {
                             let msg = self.help.get("help")
@@ -119,6 +119,13 @@ impl Machine {
                             self.push_help_list();
                         }
                         continue;
+                    }
+                    if let Some(suffix) = word.strip_prefix("help.") {
+                        if !suffix.is_empty() {
+                            let msg = self.lookup_help_text(suffix);
+                            self.stack.push(Ptr::text(&msg));
+                            continue;
+                        }
                     }
 
                     // 4. Check global handlers
@@ -245,6 +252,25 @@ impl Machine {
             }
         }
         self.stack.push(Ptr::text(&lines.join("\n")));
+    }
+
+    /// Look up help text for a dot-path like "admin.user.allow".
+    /// Tries direct handler key first, then library key format.
+    fn lookup_help_text(&self, path: &str) -> String {
+        // Direct match (global handlers: "dup", "clear", "admin", etc.)
+        if let Some(desc) = self.help.get(path) {
+            return desc.clone();
+        }
+        // Library format: "admin.user.allow" → "library:admin.user/allow"
+        if let Some(dot_pos) = path.rfind('.') {
+            let lib_part = &path[..dot_pos];
+            let method = &path[dot_pos + 1..];
+            let key = format!("library:{}/{}", lib_part, method);
+            if let Some(desc) = self.help.get(&key) {
+                return desc.clone();
+            }
+        }
+        format!("{}: no help available", path)
     }
 
     /// Push a structured list of all registered commands as a `list.help` Ptr.
@@ -515,6 +541,51 @@ mod tests {
         assert_eq!(m.stack.len(), 1);
         assert_eq!(m.stack[0].kind, "text");
         assert_eq!(m.stack[0].ref_id, "list all commands");
+    }
+
+    #[test]
+    fn help_dot_path_global() {
+        let mut m = test_machine();
+        m.execute("help.clear").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "clear the stack");
+    }
+
+    #[test]
+    fn help_dot_path_library() {
+        let mut m = test_machine();
+        m.execute("help.admin").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "administration commands");
+    }
+
+    #[test]
+    fn help_dot_path_nested_method() {
+        let mut m = test_machine();
+        m.execute("help.admin.user.allow").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "allowlist a bsky handle for login");
+    }
+
+    #[test]
+    fn help_dot_path_deep_nested() {
+        let mut m = test_machine();
+        m.execute("help.admin.oauth.setup.bsky").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "generate ES256 keypair for Bluesky OAuth");
+    }
+
+    #[test]
+    fn help_dot_path_unknown() {
+        let mut m = test_machine();
+        m.execute("help.nonexistent").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "nonexistent: no help available");
     }
 
     #[test]
