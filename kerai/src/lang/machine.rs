@@ -120,9 +120,12 @@ impl Machine {
                         }
                         continue;
                     }
-                    if let Some(suffix) = word.strip_prefix("help.") {
-                        if !suffix.is_empty() {
-                            let msg = self.lookup_help_text(suffix);
+                    // help.X or X.help → look up one-liner
+                    let help_path = word.strip_prefix("help.")
+                        .or_else(|| word.strip_suffix(".help"));
+                    if let Some(path) = help_path {
+                        if !path.is_empty() {
+                            let msg = self.lookup_help_text(path);
                             self.stack.push(Ptr::text(&msg));
                             continue;
                         }
@@ -586,6 +589,33 @@ mod tests {
         assert_eq!(m.stack.len(), 1);
         assert_eq!(m.stack[0].kind, "text");
         assert_eq!(m.stack[0].ref_id, "nonexistent: no help available");
+    }
+
+    #[test]
+    fn suffix_help_global() {
+        let mut m = test_machine();
+        m.execute("clear.help").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "clear the stack");
+    }
+
+    #[test]
+    fn suffix_help_library() {
+        let mut m = test_machine();
+        m.execute("admin.help").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "administration commands");
+    }
+
+    #[test]
+    fn suffix_help_nested_method() {
+        let mut m = test_machine();
+        m.execute("admin.user.allow.help").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "allowlist a bsky handle for login");
     }
 
     #[test]
