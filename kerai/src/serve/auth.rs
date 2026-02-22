@@ -103,16 +103,21 @@ pub async fn bsky_start(
         (StatusCode::INTERNAL_SERVER_ERROR, e)
     })?;
 
-    // Resolve handle → DID
-    let handle = req.handle.unwrap_or_else(|| "bsky.social".into());
-    let did = oauth::resolve_handle(&handle).await.map_err(|e| {
-        (StatusCode::BAD_REQUEST, format!("handle resolution failed: {e}"))
-    })?;
-
-    // Discover auth server
-    let auth_meta = oauth::discover_auth_server(&did).await.map_err(|e| {
-        (StatusCode::BAD_GATEWAY, format!("auth server discovery failed: {e}"))
-    })?;
+    // Discover auth server — resolve handle if provided, otherwise go direct to bsky.social
+    let (handle, auth_meta) = if let Some(h) = req.handle.filter(|h| !h.is_empty()) {
+        let did = oauth::resolve_handle(&h).await.map_err(|e| {
+            (StatusCode::BAD_REQUEST, format!("handle resolution failed: {e}"))
+        })?;
+        let meta = oauth::discover_auth_server(&did).await.map_err(|e| {
+            (StatusCode::BAD_GATEWAY, format!("auth server discovery failed: {e}"))
+        })?;
+        (Some(h), meta)
+    } else {
+        let meta = oauth::discover_auth_server_from_pds("https://bsky.social").await.map_err(|e| {
+            (StatusCode::BAD_GATEWAY, format!("auth server discovery failed: {e}"))
+        })?;
+        (None, meta)
+    };
 
     // Generate PKCE
     let (code_verifier, code_challenge) = oauth::generate_pkce();
@@ -124,6 +129,8 @@ pub async fn bsky_start(
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("PAR failed: {e}")))?;
 
     // Store state
+    let handle_ref: Option<&str> = handle.as_deref();
+    let did_ref: Option<&str> = None;
     client
         .execute(
             "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, handle, did, token_endpoint) \
@@ -132,8 +139,8 @@ pub async fn bsky_start(
                 &state,
                 &code_verifier,
                 &session_token,
-                &handle,
-                &did,
+                &handle_ref,
+                &did_ref,
                 &auth_meta.token_endpoint,
             ],
         )

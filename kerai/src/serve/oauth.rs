@@ -163,6 +163,28 @@ pub async fn resolve_handle(handle: &str) -> Result<String, String> {
     Ok(data.did)
 }
 
+/// Fetch auth server metadata directly from a PDS endpoint URL.
+/// Used when no handle is provided — goes straight to bsky.social.
+pub async fn discover_auth_server_from_pds(pds_url: &str) -> Result<AuthServerMeta, String> {
+    let meta_url = format!(
+        "{}/.well-known/oauth-authorization-server",
+        pds_url.trim_end_matches('/')
+    );
+    let resp = reqwest::get(&meta_url)
+        .await
+        .map_err(|e| format!("auth server metadata request failed: {e}"))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("auth server metadata failed ({status}): {body}"));
+    }
+
+    resp.json()
+        .await
+        .map_err(|e| format!("auth server metadata parse failed: {e}"))
+}
+
 /// Discover the authorization server for a DID.
 pub async fn discover_auth_server(did: &str) -> Result<AuthServerMeta, String> {
     // Step 1: Get DID document from PLC directory

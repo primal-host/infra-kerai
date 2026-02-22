@@ -354,59 +354,52 @@ async fn resolve_requests(machine: &mut Machine, pool: &Pool) {
 
                         match OAuthConfig::from_config_rows(&pairs) {
                             Ok(config) => {
-                                // Resolve handle → DID → auth server
-                                match oauth::resolve_handle("bsky.social").await {
-                                    Ok(did) => {
-                                        match oauth::discover_auth_server(&did).await {
-                                            Ok(auth_meta) => {
-                                                let (code_verifier, code_challenge) = oauth::generate_pkce();
-                                                let state = oauth::generate_state();
+                                // Go directly to bsky.social auth server (no handle needed)
+                                match oauth::discover_auth_server_from_pds("https://bsky.social").await {
+                                    Ok(auth_meta) => {
+                                        let (code_verifier, code_challenge) = oauth::generate_pkce();
+                                        let state = oauth::generate_state();
 
-                                                match oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state).await {
-                                                    Ok(authorize_url) => {
-                                                        // Find the actual session token
-                                                        let token_row = client
-                                                            .query_opt(
-                                                                "SELECT token FROM kerai.sessions WHERE user_id = $1 AND workspace_id = $2",
-                                                                &[&machine.user_id, &machine.workspace_id],
-                                                            )
-                                                            .await;
+                                        match oauth::pushed_auth_request(&config, &auth_meta, &code_challenge, &state).await {
+                                            Ok(authorize_url) => {
+                                                // Find the actual session token
+                                                let token_row = client
+                                                    .query_opt(
+                                                        "SELECT token FROM kerai.sessions WHERE user_id = $1 AND workspace_id = $2",
+                                                        &[&machine.user_id, &machine.workspace_id],
+                                                    )
+                                                    .await;
 
-                                                        let sess_token = match token_row {
-                                                            Ok(Some(r)) => r.get::<_, String>(0),
-                                                            _ => String::new(),
-                                                        };
+                                                let sess_token = match token_row {
+                                                    Ok(Some(r)) => r.get::<_, String>(0),
+                                                    _ => String::new(),
+                                                };
 
-                                                        // Store oauth state
-                                                        let _ = client
-                                                            .execute(
-                                                                "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, did, token_endpoint) \
-                                                                 VALUES ($1, $2, $3, $4, $5)",
-                                                                &[&state, &code_verifier, &sess_token, &did, &auth_meta.token_endpoint],
-                                                            )
-                                                            .await;
+                                                // Store oauth state
+                                                let _ = client
+                                                    .execute(
+                                                        "INSERT INTO kerai.oauth_state (state, code_verifier, session_token, token_endpoint) \
+                                                         VALUES ($1, $2, $3, $4)",
+                                                        &[&state, &code_verifier, &sess_token, &auth_meta.token_endpoint],
+                                                    )
+                                                    .await;
 
-                                                        machine.stack[i] = Ptr {
-                                                            kind: "auth_pending".into(),
-                                                            ref_id: "bsky".into(),
-                                                            meta: serde_json::json!({
-                                                                "url": authorize_url,
-                                                            }),
-                                                            id: 0,
-                                                        };
-                                                    }
-                                                    Err(e) => {
-                                                        machine.stack[i] = Ptr::error(&format!("PAR failed: {e}"));
-                                                    }
-                                                }
+                                                machine.stack[i] = Ptr {
+                                                    kind: "auth_pending".into(),
+                                                    ref_id: "bsky".into(),
+                                                    meta: serde_json::json!({
+                                                        "url": authorize_url,
+                                                    }),
+                                                    id: 0,
+                                                };
                                             }
                                             Err(e) => {
-                                                machine.stack[i] = Ptr::error(&format!("auth server discovery failed: {e}"));
+                                                machine.stack[i] = Ptr::error(&format!("PAR failed: {e}"));
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        machine.stack[i] = Ptr::error(&format!("handle resolution failed: {e}"));
+                                        machine.stack[i] = Ptr::error(&format!("auth server discovery failed: {e}"));
                                     }
                                 }
                             }
