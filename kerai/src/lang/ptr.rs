@@ -142,8 +142,42 @@ impl Ptr {
     }
 }
 
+impl Ptr {
+    fn is_folded(&self) -> bool {
+        self.meta.get("folded").and_then(|v| v.as_bool()).unwrap_or(false)
+    }
+}
+
 impl fmt::Display for Ptr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_folded() {
+            return match self.kind.as_str() {
+                "list.help" => {
+                    let count = self.meta.get("items")
+                        .and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+                    write!(f, "[commands: {}]", count)
+                }
+                "workspace_list" => {
+                    let count = self.meta.get("items")
+                        .and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+                    write!(f, "[workspaces: {}]", count)
+                }
+                "list" => {
+                    if let Ok(items) = serde_json::from_value::<Vec<Ptr>>(self.meta.clone()) {
+                        write!(f, "[list: {}]", items.len())
+                    } else {
+                        write!(f, "[list: 0]")
+                    }
+                }
+                "text" => {
+                    let s = &self.ref_id;
+                    let preview = if s.len() > 40 { &s[..37] } else { s };
+                    write!(f, "\"{}{}\"", preview, if s.len() > 40 { "..." } else { "" })
+                }
+                // Single-line kinds: folding is a no-op
+                _ => write!(f, "{}", self.ref_id),
+            };
+        }
         match self.kind.as_str() {
             "int" => write!(f, "{}", self.ref_id),
             "float" => {
