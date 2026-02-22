@@ -27,6 +27,10 @@ body{display:flex;flex-direction:column}
 .kind-auth_pending{color:#d29922}
 .kind-session{color:#58a6ff}
 .kind-list-help{color:#8b949e}
+.kind-text-info{color:#58a6ff}
+.kind-text-warn{color:#d29922}
+.kind-text-success{color:#7ee787}
+.kind-text-muted{color:#8b949e}
 .ws-item{display:block;padding:2px 0;cursor:pointer}
 .ws-item:hover{text-decoration:underline}
 .ws-active{font-weight:bold}
@@ -127,6 +131,11 @@ function formatPtr(ptr){
       const s=ptr.ref_id;
       return s.length>60?'"'+s.slice(0,57)+'..."':'"'+s+'"';
     }
+    case 'text.info':
+    case 'text.warn':
+    case 'text.success':
+    case 'text.muted':
+      return ptr.ref_id;
     case 'list':{
       try{
         const items=Array.isArray(ptr.meta)?ptr.meta:[];
