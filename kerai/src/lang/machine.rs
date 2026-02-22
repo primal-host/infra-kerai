@@ -108,7 +108,20 @@ impl Machine {
                         continue;
                     }
 
-                    // 3. Check global handlers
+                    // 3. help command — push structured list or one-liner
+                    if word == "help" {
+                        if help_mode {
+                            let msg = self.help.get("help")
+                                .cloned()
+                                .unwrap_or_else(|| "list all commands".into());
+                            self.stack.push(Ptr::text(&msg));
+                        } else {
+                            self.push_help_list();
+                        }
+                        continue;
+                    }
+
+                    // 4. Check global handlers
                     if let Some(handler) = self.handlers.get(word).copied() {
                         if help_mode {
                             let msg = self.help.get(word)
@@ -123,7 +136,7 @@ impl Machine {
                         continue;
                     }
 
-                    // 4. Check dot-form: "a.b" → lookup as handler
+                    // 5. Check dot-form: "a.b" → lookup as handler
                     if word.contains('.') {
                         if let Some(handler) = self.handlers.get(word).copied() {
                             if help_mode {
@@ -140,7 +153,7 @@ impl Machine {
                         }
                     }
 
-                    // 5. If stack top is a library, dispatch as library method
+                    // 6. If stack top is a library, dispatch as library method
                     if let Some(top) = self.stack.last() {
                         if top.kind == "library" {
                             let lib_ref = top.ref_id.clone();
@@ -173,7 +186,7 @@ impl Machine {
                         }
                     }
 
-                    // 6. Check type methods on stack top
+                    // 7. Check type methods on stack top
                     if let Some(top) = self.stack.last() {
                         let type_key = (top.kind.clone(), word.to_string());
                         if let Some(handler) = self.type_methods.get(&type_key).copied() {
@@ -184,7 +197,7 @@ impl Machine {
                         }
                     }
 
-                    // 7. Unknown word — push as error
+                    // 8. Unknown word — push as error
                     self.stack.push(Ptr::error(&format!("unknown word: {word}")));
                 }
             }
@@ -232,6 +245,30 @@ impl Machine {
             }
         }
         self.stack.push(Ptr::text(&lines.join("\n")));
+    }
+
+    /// Push a structured list of all registered commands as a `list.help` Ptr.
+    fn push_help_list(&mut self) {
+        let mut items: Vec<serde_json::Value> = self.help.iter()
+            .map(|(key, desc)| {
+                // Convert internal key format to dot-path:
+                //   "library:admin.user/allow" → "admin.user.allow"
+                //   "library:admin/oauth"      → "admin.oauth"
+                //   "dup"                       → "dup"
+                let path = if let Some(rest) = key.strip_prefix("library:") {
+                    rest.replace('/', ".")
+                } else {
+                    key.clone()
+                };
+                serde_json::json!({"path": path, "desc": desc})
+            })
+            .collect();
+        items.sort_by(|a, b| {
+            let pa = a["path"].as_str().unwrap_or("");
+            let pb = b["path"].as_str().unwrap_or("");
+            pa.cmp(pb)
+        });
+        self.stack.push(Ptr::help_list(items));
     }
 }
 
@@ -449,6 +486,35 @@ mod tests {
         m.execute("42.").unwrap();
         assert_eq!(m.stack.len(), 1);
         assert_eq!(m.stack[0].kind, "float");
+    }
+
+    #[test]
+    fn help_pushes_list_help() {
+        let mut m = test_machine();
+        m.execute("help").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "list.help");
+        let items = m.stack[0].meta.get("items").unwrap().as_array().unwrap();
+        // Should contain all registered commands
+        assert!(items.len() > 10);
+        // Items should be sorted by path
+        let paths: Vec<&str> = items.iter().map(|i| i["path"].as_str().unwrap()).collect();
+        let mut sorted = paths.clone();
+        sorted.sort();
+        assert_eq!(paths, sorted);
+        // Check a few known entries
+        assert!(items.iter().any(|i| i["path"] == "clear" && i["desc"] == "clear the stack"));
+        assert!(items.iter().any(|i| i["path"] == "admin.user.allow"));
+        assert!(items.iter().any(|i| i["path"] == "help" && i["desc"] == "list all commands"));
+    }
+
+    #[test]
+    fn help_dot_shows_help_text() {
+        let mut m = test_machine();
+        m.execute("help.").unwrap();
+        assert_eq!(m.stack.len(), 1);
+        assert_eq!(m.stack[0].kind, "text");
+        assert_eq!(m.stack[0].ref_id, "list all commands");
     }
 
     #[test]
