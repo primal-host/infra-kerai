@@ -55,6 +55,42 @@ impl Ptr {
         }
     }
 
+    pub fn info(s: &str) -> Self {
+        Self {
+            kind: "text.info".into(),
+            ref_id: s.to_string(),
+            meta: serde_json::Value::Null,
+            id: 0,
+        }
+    }
+
+    pub fn warn(s: &str) -> Self {
+        Self {
+            kind: "text.warn".into(),
+            ref_id: s.to_string(),
+            meta: serde_json::Value::Null,
+            id: 0,
+        }
+    }
+
+    pub fn success(s: &str) -> Self {
+        Self {
+            kind: "text.success".into(),
+            ref_id: s.to_string(),
+            meta: serde_json::Value::Null,
+            id: 0,
+        }
+    }
+
+    pub fn muted(s: &str) -> Self {
+        Self {
+            kind: "text.muted".into(),
+            ref_id: s.to_string(),
+            meta: serde_json::Value::Null,
+            id: 0,
+        }
+    }
+
     pub fn error(msg: &str) -> Self {
         Self {
             kind: "error".into(),
@@ -125,6 +161,9 @@ impl fmt::Display for Ptr {
                 } else {
                     write!(f, "\"{}\"", s)
                 }
+            }
+            "text.info" | "text.warn" | "text.success" | "text.muted" => {
+                write!(f, "{}", self.ref_id)
             }
             "list" => {
                 if let Ok(items) = serde_json::from_value::<Vec<Ptr>>(self.meta.clone()) {
@@ -242,6 +281,26 @@ mod tests {
     fn list_display() {
         let list = Ptr::list(vec![Ptr::int(1), Ptr::int(2), Ptr::int(3)]);
         assert_eq!(list.to_string(), "[1 2 3]");
+    }
+
+    #[test]
+    fn info_display() {
+        assert_eq!(Ptr::info("authenticating").to_string(), "authenticating");
+    }
+
+    #[test]
+    fn warn_display() {
+        assert_eq!(Ptr::warn("session closed").to_string(), "session closed");
+    }
+
+    #[test]
+    fn success_display() {
+        assert_eq!(Ptr::success("done").to_string(), "done");
+    }
+
+    #[test]
+    fn muted_display() {
+        assert_eq!(Ptr::muted("hint").to_string(), "hint");
     }
 
     #[test]
