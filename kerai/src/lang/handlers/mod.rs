@@ -19,23 +19,22 @@ pub fn register_all() -> (
     let mut type_methods: HashMap<(String, String), Handler> = HashMap::new();
     let mut help: HashMap<String, String> = HashMap::new();
 
-    // Stack operations
+    // Stack operations (drop, fold, view handled as special words in execute())
     handlers.insert("dup".into(), stack_ops::dup);
-    handlers.insert("drop".into(), stack_ops::drop);
     handlers.insert("swap".into(), stack_ops::swap);
     handlers.insert("over".into(), stack_ops::over);
     handlers.insert("rot".into(), stack_ops::rot);
     handlers.insert("clear".into(), stack_ops::clear);
-    handlers.insert("view".into(), stack_ops::view);
     handlers.insert("depth".into(), stack_ops::depth);
 
     help.insert("dup".into(), "duplicate top of stack".into());
-    help.insert("drop".into(), "remove items: drop, drop.0, drop.-N, drop.A-B, drop.ROWID".into());
+    help.insert("drop".into(), "remove items (drop. = all, drop.-N, drop.A-B, drop.ROWID)".into());
+    help.insert("fold".into(), "collapse items to one line (fold. = all, same targeting as drop)".into());
+    help.insert("view".into(), "expand items (view. = all, same targeting as drop)".into());
     help.insert("swap".into(), "swap top two stack items".into());
     help.insert("over".into(), "copy second item to top".into());
     help.insert("rot".into(), "rotate top three items".into());
     help.insert("clear".into(), "clear the stack".into());
-    help.insert("view".into(), "view top item details".into());
     help.insert("depth".into(), "push stack depth".into());
 
     // Arithmetic operators
